@@ -22,7 +22,7 @@
         <article class="surface library-card">
           <div class="library-summary">
             <a [routerLink]="titleLink(entry.title)" [attr.aria-label]="'Открыть ' + name">
-              <app-cover [src]="entry.title.coverUrl" label=""/>
+              <app-cover [src]="entry.title.coverUrl" [titleKey]="entry.title" label=""/>
             </a>
             <div class="library-info">
               <p class="meta">{{ entry.title.sourceName }}</p>

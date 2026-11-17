@@ -144,14 +144,14 @@
           </a>
         </div>
         <a class="feature-art" [attr.aria-label]="'Открыть ' + name" [routerLink]="titleLink(item)" [queryParams]="titleContext()">
-          <app-cover [src]="item.coverUrl" [label]="'Обложка ' + name" [eager]="true"/>
+          <app-cover [src]="item.coverUrl" [titleKey]="item" [label]="'Обложка ' + name" [eager]="true"/>
         </a>
       </article>
     } @else if (result.value().length) {
       <div class="catalog-grid">
         @for (item of result.value(); track item.sourceId + '/' + item.externalTitleId) {
           <a class="catalog-card" [routerLink]="titleLink(item)" [queryParams]="titleContext()">
-            <app-cover [src]="item.coverUrl" label=""/>
+            <app-cover [src]="item.coverUrl" [titleKey]="item" label=""/>
             <div>
               <h2>{{ item | localizedTitle:titleLanguage() }}</h2>
               <p class="muted">{{ item.sourceName }}</p>

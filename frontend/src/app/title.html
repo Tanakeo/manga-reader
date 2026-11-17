@@ -10,7 +10,7 @@
     @let item = title.value();
     @let name = item | localizedTitle:titleLanguage();
     <section class="title-hero" [class.title-hero-portrait]="item.sourceId !== 'peppercarrot'" aria-label="О тайтле">
-      <app-cover [src]="item.coverUrl" [label]="'Обложка ' + name" [eager]="true"/>
+      <app-cover [src]="item.coverUrl" [titleKey]="item" [label]="'Обложка ' + name" [eager]="true"/>
       <div>
         <p class="eyebrow">{{ item.sourceName }}</p>
         <h1 class="page-heading" [class.long-title]="name.length > 45">{{ name }}</h1>

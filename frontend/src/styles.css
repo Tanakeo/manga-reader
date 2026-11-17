@@ -211,7 +211,7 @@ app-cover img { width: 100%; height: auto; }
   display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr);
   place-items: center; aspect-ratio: 2 / 3; background: var(--bg);
 }
-.catalog-card img { width: 100%; height: 100%; object-fit: contain; }
+.catalog-card img { width: 100%; height: 100%; object-fit: cover; object-position: center top; }
 .catalog-card .cover-fallback { width: 100%; height: 100%; aspect-ratio: auto; }
 .catalog-card h2 { font-size: 16px; line-height: 1.3; }
 .catalog-card .muted { margin-top: 5px; font-size: 13px; }
