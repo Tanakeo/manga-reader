@@ -1,0 +1,90 @@
+.browse-tabs {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: min(100%, 350px);
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  margin-bottom: 20px;
+}
+
+.browse-tabs::before {
+  content: '';
+  position: absolute;
+  inset: 4px auto 4px 4px;
+  z-index: -1;
+  width: calc(50% - 4px);
+  border-radius: 99px;
+  background: var(--accent);
+  transition: transform 220ms ease;
+}
+
+.browse-tabs.extensions-active::before { transform: translateX(100%); }
+
+.browse-tabs button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 44px;
+  padding-inline: 8px;
+  border: 0;
+  border-radius: 99px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 650;
+}
+
+.browse-tabs button:hover { color: var(--text); }
+.browse-tabs button[aria-selected='true'] { color: var(--ink); }
+.browse-panel:focus-visible { outline-offset: 5px; }
+.browse-panel > app-state { display: block; margin-bottom: 12px; }
+.browse-notice:not(:empty) { color: var(--accent); margin-bottom: 12px; }
+.source-list { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
+
+.source-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px 22px;
+  padding: 20px;
+}
+
+.source-info { display: flex; align-items: center; gap: 14px; }
+.source-info h2 { font-size: 21px; line-height: 1.2; letter-spacing: -.035em; }
+.source-info p { font-size: 13px; margin-top: 5px; }
+.source-mark {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--accent);
+}
+
+.source-actions { justify-content: end; }
+.extension-action { min-width: 144px; }
+.extension-action.status-tag {
+  min-height: 44px;
+  display: inline-flex;
+  padding-inline: 14px;
+  font-size: inherit;
+}
+
+.source-error { grid-column: 1 / -1; margin-top: 0; }
+
+@media (max-width: 720px) {
+  .browse-tabs { width: 100%; margin-bottom: 16px; }
+  .source-row { grid-template-columns: minmax(0, 1fr); padding: 15px; }
+  .source-actions { justify-content: start; }
+}
+
+@media (max-width: 370px) {
+  .source-actions .button { width: 100%; }
+}

@@ -1,0 +1,185 @@
+<main id="main-content" class="wrap catalog" tabindex="-1">
+  <div class="intro">
+    <div>
+      <h1 class="page-heading">Каталог</h1>
+      <p>Манга и комиксы из открытых источников</p>
+    </div>
+    <div class="filters" role="search" aria-label="Поиск по каталогу">
+      <div class="search-field">
+        <label for="catalog-search">{{ searchLabel() }}</label>
+        <div class="search">
+          <svg class="icon" [lucideIcon]="magnify" [size]="16" aria-hidden="true"/>
+          <input id="catalog-search" type="search" placeholder="Поиск по названию"
+            maxlength="120" [ngModel]="search()" (ngModelChange)="editSearch($event)">
+        </div>
+      </div>
+      <label class="source-select">
+        <select aria-label="Источник" [ngModel]="sourceId()" (ngModelChange)="setSource($event)"
+          [disabled]="!sourceId() && (!sources.hasValue() || !sources.value().length)">
+          <option value="">Все источники</option>
+          @if (sourceId() && !selectedSource()) {
+            <option [value]="sourceId()">{{ sourceId() }}</option>
+          }
+          @if (sources.hasValue()) {
+            @for (source of sources.value(); track source.sourceId) {
+              <option [value]="source.sourceId">{{ source.sourceName }}</option>
+            }
+          }
+        </select>
+        <svg class="icon" [lucideIcon]="chevron" [size]="15" aria-hidden="true"/>
+      </label>
+    </div>
+  </div>
+
+  @if (selectedSource(); as source) {
+    @if (source.supportsTags || source.sorts.length) {
+      <div class="catalog-options">
+        @if (source.supportsTags) {
+          <details class="tag-filter">
+            <summary class="button secondary">Теги @if (query().tagIds.length) { <span class="count">{{ query().tagIds.length }}</span> }
+              <svg class="icon" [lucideIcon]="chevron" [size]="15" aria-hidden="true"/>
+            </summary>
+            <div class="surface tag-panel">
+              <div class="tag-panel-heading">
+                <p class="muted">Все выбранные теги · до {{ maxTags }}</p>
+                @if (query().tagIds.length) {
+                  <button class="button secondary compact" type="button" (click)="removeTags()">Сбросить теги</button>
+                }
+              </div>
+              @if (tags.isLoading()) {
+                <app-state kind="loading" message="Загружаем теги…"/>
+              } @else if (tags.error(); as error) {
+                <app-state kind="error" [message]="problem(error).detail" (retry)="tags.reload()"/>
+              } @else {
+                @for (group of groups(); track group.name) {
+                  <fieldset class="tag-group">
+                    <legend>{{ group.name }}</legend>
+                    <div class="tag-list">
+                      @for (tag of group.tags; track tag.id) {
+                        @let selected = query().tagIds.includes(tag.id);
+                        <label class="status-tag tag-option">
+                          <input type="checkbox" [checked]="selected" (change)="toggleTag(tag.id)"
+                            [disabled]="!selected && query().tagIds.length >= maxTags">
+                          {{ tagName(tag, titleLanguage()) }}
+                        </label>
+                      }
+                    </div>
+                  </fieldset>
+                } @empty { <p class="muted">У источника пока нет тегов.</p> }
+              }
+            </div>
+          </details>
+        }
+        @if (source.sorts.length) {
+          <label class="catalog-sort">Сортировка
+            <select [ngModel]="query().sort" (ngModelChange)="setSort($event)">
+              <option value="">По умолчанию</option>
+              @for (sort of source.sorts; track sort) {
+                @if (sortNames[sort]; as name) {
+                  <option [value]="sort" [disabled]="sort === 'relevance' && !search().trim()">{{ name }}</option>
+                }
+              }
+            </select>
+          </label>
+        }
+      </div>
+    }
+  }
+  @if (selectedTags().length || query().q || query().sort) {
+    <div class="tag-list catalog-selected" aria-label="Применённые фильтры">
+      @for (tag of selectedTags(); track tag.id) {
+        <button type="button" class="status-tag tag-remove" (click)="removeTags([tag.id])"
+          [attr.aria-label]="'Убрать тег ' + tag.name">{{ tag.name }} <span aria-hidden="true">×</span></button>
+      }
+      <button class="button secondary compact" type="button" (click)="reset()">Сбросить поиск и фильтры</button>
+    </div>
+  }
+
+  @let result = results;
+  @if (result.hasValue() && sources.error(); as error) {
+    <div class="catalog-source-error" role="alert">
+      <p>Список источников недоступен. {{ problem(error).detail }}</p>
+      <button class="button secondary" type="button" (click)="sources.reload()">Обновить список</button>
+    </div>
+  }
+  @if (result.isLoading()) {
+    <app-state kind="loading" artwork message="Загружаем каталог…"/>
+  } @else if (result.error(); as error) {
+    @let issue = problem(error);
+    @if (issue.code === 'SOURCE_DISABLED' || issue.code === 'SOURCE_NOT_FOUND') {
+      <div class="state" role="alert">
+        <p>{{ issue.detail }}</p>
+        <div class="actions">
+          <button class="button secondary" type="button" (click)="setSource('')">Все источники</button>
+          <a class="button primary" routerLink="/browse">Открыть обзор</a>
+        </div>
+      </div>
+    } @else if (issue.invalidTagIds?.length) {
+      <div class="state" role="alert">
+        <p>{{ issue.detail }}</p>
+        <button class="button secondary" type="button" (click)="removeTags(issue.invalidTagIds)">Убрать неизвестные теги</button>
+      </div>
+    } @else if (issue.code === 'CATALOG_OPTIONS_UNSUPPORTED') {
+      <div class="state" role="alert">
+        <p>{{ issue.detail }}</p>
+        <button class="button secondary" type="button" (click)="reset()">Сбросить поиск и фильтры</button>
+      </div>
+    } @else {
+      <app-state kind="error" [message]="issue.detail" (retry)="result.reload(); sources.reload()"/>
+    }
+  } @else if (result.hasValue()) {
+    @if (featured(); as item) {
+      @let name = item | localizedTitle:titleLanguage();
+      <article class="feature">
+        <div class="feature-copy">
+          <p class="eyebrow">Из каталога</p>
+          <h2 [class.long-title]="name.length > 45">{{ name }}</h2>
+          @if (detail.hasValue() && detail.value().description; as description) {
+            <p class="feature-description">{{ description }}</p>
+          }
+          <p class="meta">@if (item.author) { {{ item.author }} <span>·</span> } {{ item.sourceName }}</p>
+          <app-catalog-facts [item]="item"/>
+          <a class="button primary feature-action" [routerLink]="titleLink(item)" [queryParams]="titleContext()">
+            Открыть тайтл <svg class="icon" [lucideIcon]="arrow" [size]="18" aria-hidden="true"/>
+          </a>
+        </div>
+        <a class="feature-art" [attr.aria-label]="'Открыть ' + name" [routerLink]="titleLink(item)" [queryParams]="titleContext()">
+          <app-cover [src]="item.coverUrl" [label]="'Обложка ' + name" [eager]="true"/>
+        </a>
+      </article>
+    } @else if (result.value().length) {
+      <div class="catalog-grid">
+        @for (item of result.value(); track item.sourceId + '/' + item.externalTitleId) {
+          <a class="catalog-card" [routerLink]="titleLink(item)" [queryParams]="titleContext()">
+            <app-cover [src]="item.coverUrl" label=""/>
+            <div>
+              <h2>{{ item | localizedTitle:titleLanguage() }}</h2>
+              <p class="muted">{{ item.sourceName }}</p>
+              <app-catalog-facts [item]="item"/>
+            </div>
+          </a>
+        }
+      </div>
+    } @else if (sources.hasValue() && !sources.value().length) {
+      <app-state kind="empty" message="Для поиска по каталогу подключите источник.">
+        <a class="button primary" routerLink="/browse">Открыть обзор</a>
+      </app-state>
+    } @else {
+      <app-state kind="empty" [message]="query().q || query().tagIds.length || query().sort
+        ? 'По вашему запросу ничего не найдено.' : 'Каталог пока пуст.'">
+      </app-state>
+    }
+    <div class="inventory">
+      <span>{{ countLabel(result.value().length) }}</span>
+      @if (featured(); as item) { <span>Источник <b>{{ item.sourceName }}</b></span> }
+    </div>
+  }
+</main>
+@if (detail.hasValue() && detail.value().license; as license) {
+  <footer class="wrap site-footer">
+    <a class="footer-brand" routerLink="/catalog">Кадр<span class="accent">.</span></a>
+    <span>Иллюстрация @if (detail.value().author) { © {{ detail.value().author }} · }
+      <a [href]="license.url" target="_blank" rel="noopener noreferrer">{{ license.code }}</a>
+    </span>
+  </footer>
+}

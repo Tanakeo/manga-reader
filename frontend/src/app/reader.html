@@ -1,0 +1,140 @@
+<app-skip-link label="К страницам"/>
+<header class="reader-bar" #bar>
+  <div class="wrap bar">
+    <a class="back-link" [routerLink]="offline() ? '/library/downloads' : titleLink(key())">
+      <svg class="icon" [lucideIcon]="back" [size]="17" aria-hidden="true"/> Назад
+    </a>
+    <div class="reader-title">
+      @if (readerTitle(); as title) { <p>{{ title | localizedTitle:titleLanguage() }}</p> }
+      <h1>{{ chapterContent()?.title ?? 'Читалка' }}</h1>
+    </div>
+    <button type="button" class="button secondary reader-chapters" (click)="openChapters()" aria-haspopup="dialog">
+      <svg class="icon" [lucideIcon]="list" [size]="17" aria-hidden="true"/> Главы
+    </button>
+  </div>
+</header>
+<main id="main-content" class="paper" tabindex="-1">
+  @if (waiting()) {
+    <app-state kind="loading" artwork message="Загружаем страницы…"/>
+  } @else if (issue(); as issue) {
+    @if (issue.availableLanguages?.length) {
+      <app-state kind="empty" [message]="issue.detail">
+        <div class="actions">
+          @for (language of issue.availableLanguages; track language) {
+            <a class="button secondary" [routerLink]="link(key(), chapterId(), language)">{{ lang(language) }}</a>
+          }
+        </div>
+      </app-state>
+    } @else if (offline()) {
+      <div class="state" role="alert">
+        <p>{{ issue.detail }}</p>
+        <div class="actions">
+          <a class="button secondary" routerLink="/library/downloads">В скачанные главы</a>
+          @if (sourceId()) {
+          @if (sourceId() && externalTitleId() && chapterId() && language()) {
+            <a class="button secondary" [routerLink]="link(key(), chapterId(), language())">Открыть онлайн</a>
+          }
+          }
+        </div>
+      </div>
+    } @else {
+      <app-state kind="error" [message]="issue.detail" (retry)="retryContent()"/>
+    }
+  } @else if (chapterContent(); as chapter) {
+    <div class="page-meta">
+      <span>{{ lang(chapter.language) }} @if (offline()) { · Офлайн }</span>
+      @if (chapter.pageCount) { <span>Страница {{ current() + 1 }} из {{ chapter.pageCount }}</span> }
+      @if (entry()) {
+        <button class="button secondary compact" type="button" [disabled]="saving()" (click)="savePosition()">
+          Сохранить позицию
+        </button>
+      }
+      @if (saveFeedback()) { <span role="status">{{ saveFeedback() }}</span> }
+    </div>
+    @for (page of chapter.pages; track (downloadId() ?? 'online') + '/' + chapterId() + '/' + language() + '/' + page.index) {
+      <app-page-image [src]="page.imageUrl" [source]="chapter.attribution.sourceUrl" [index]="page.index"
+        [eager]="page.index <= targetPage()" [offline]="offline()" (settled)="markReady($event)"/>
+    } @empty {
+      <app-state kind="empty" message="В этой главе пока нет страниц."/>
+    }
+    <div class="reader-tail">
+      <nav class="reader-links" aria-label="Соседние главы">
+        @if (offline()) {
+          @if (localNeighbours().previous; as previous) {
+            <a class="button secondary" [routerLink]="offlineLink(previous)">
+              <svg class="icon" [lucideIcon]="back" [size]="16" aria-hidden="true"/> Предыдущая скачанная глава
+            </a>
+          }
+          @if (localNeighbours().next; as following) {
+            <a class="button primary next-chapter" [routerLink]="offlineLink(following)">
+              Следующая скачанная глава <svg class="icon" [lucideIcon]="next" [size]="16" aria-hidden="true"/>
+            </a>
+          } @else { <p class="muted">Дальше скачанных глав на этом языке нет.</p> }
+        } @else {
+          @if (chapter.previousChapterId; as previous) {
+          <a class="button secondary" [routerLink]="link(key(), previous, chapter.language)">
+            <svg class="icon" [lucideIcon]="back" [size]="16" aria-hidden="true"/> Предыдущая глава
+          </a>
+          }
+          @if (chapter.nextChapterId; as following) {
+          <a class="button primary next-chapter" [routerLink]="link(key(), following, chapter.language)">
+            Следующая глава <svg class="icon" [lucideIcon]="next" [size]="16" aria-hidden="true"/>
+          </a>
+          }
+        }
+      </nav>
+      <footer class="attribution">
+        @if (chapter.attribution.author; as author) { <p>Автор · {{ author }}</p> }
+        @if (chapter.attribution.creditsText) { <p>{{ chapter.attribution.creditsText }}</p> }
+        <div class="actions">
+          <a [href]="chapter.attribution.sourceUrl" target="_blank" rel="noopener noreferrer">Оригинал главы</a>
+          @if (chapter.attribution.license; as license) {
+            <a [href]="license.url" target="_blank" rel="noopener noreferrer">{{ license.code }}</a>
+          }
+        </div>
+      </footer>
+    </div>
+  }
+</main>
+<dialog #chaptersDialog class="dialog chapter-dialog" aria-labelledby="reader-chapter-heading">
+  <div class="dialog-heading">
+    <h2 id="reader-chapter-heading">{{ offline() ? 'Скачанные главы' : 'Главы' }}</h2>
+    <button type="button" class="button secondary icon-button" autofocus aria-label="Закрыть" (click)="closeChapters()">
+      <svg class="icon" [lucideIcon]="close" [size]="19" aria-hidden="true"/>
+    </button>
+  </div>
+  @if (offline()) {
+    <ol class="chapter-list dialog-chapters">
+      @for (item of offlineChapters(); track item.id) {
+        <li class="chapter-row">
+          <span class="chapter-number">{{ chapterLabel(item) }}</span>
+          <h3>{{ item.chapterTitle ?? item.chapterId }}</h3>
+          <a class="button secondary compact" [routerLink]="offlineLink(item)"
+            [attr.aria-current]="item.id === downloadId() ? 'page' : null" (click)="closeChapters()">{{ lang(item.language) }}</a>
+        </li>
+      } @empty { <li><app-state kind="empty" message="Скачанные главы недоступны."/></li> }
+    </ol>
+  } @else if (chapters.isLoading()) {
+    <app-state kind="loading" message="Загружаем список глав…"/>
+  } @else if (chapters.error(); as error) {
+    <app-state kind="error" [message]="problem(error).detail" (retry)="chapters.reload()"/>
+  } @else if (chapters.hasValue()) {
+    <ol class="chapter-list dialog-chapters">
+      @for (chapter of chapters.value(); track chapter.id) {
+        <li class="chapter-row">
+          <span class="chapter-number">{{ chapter.number ?? '—' }}</span>
+          <h3>{{ chapter.title }}</h3>
+          <div class="chapter-languages">
+            @for (langCode of chapter.languages; track langCode) {
+              <a class="button secondary compact" [routerLink]="link(key(), chapter.id, langCode)"
+                [attr.aria-current]="chapter.id === chapterId() && langCode === language() ? 'page' : null"
+                [attr.aria-label]="chapter.title + ' — ' + lang(langCode)" (click)="closeChapters()">
+                {{ langCode.toUpperCase() }}
+              </a>
+            }
+          </div>
+        </li>
+      } @empty { <li><app-state kind="empty" message="Глав пока нет."/></li> }
+    </ol>
+  }
+</dialog>

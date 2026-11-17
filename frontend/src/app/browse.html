@@ -1,0 +1,103 @@
+<main id="main-content" class="wrap section-page" tabindex="-1">
+  <div class="intro">
+    <div>
+      <h1 class="page-heading">Обзор</h1>
+      <p>Подключайте сайты и открывайте их каталоги.</p>
+    </div>
+  </div>
+
+  <div class="browse-tabs" role="tablist" aria-label="Источники и расширения"
+    [class.extensions-active]="activeTab() === 'extensions'" (keydown)="moveTab($event, sourcesTab, extensionsTab)">
+    <button #sourcesTab id="browse-sources-tab" type="button" role="tab" aria-controls="browse-sources-panel"
+      [attr.aria-selected]="activeTab() === 'sources'" [tabIndex]="activeTab() === 'sources' ? 0 : -1"
+      (click)="selectTab('sources')">
+      <svg class="icon" [lucideIcon]="globe" [size]="17" aria-hidden="true"/> Источники
+    </button>
+    <button #extensionsTab id="browse-extensions-tab" type="button" role="tab" aria-controls="browse-extensions-panel"
+      [attr.aria-selected]="activeTab() === 'extensions'" [tabIndex]="activeTab() === 'extensions' ? 0 : -1"
+      (click)="selectTab('extensions')">
+      <svg class="icon" [lucideIcon]="plug" [size]="17" aria-hidden="true"/> Расширения
+    </button>
+  </div>
+
+  <div class="browse-notice" role="status">{{ notice() }}</div>
+  <section class="browse-panel" id="browse-sources-panel" role="tabpanel" aria-labelledby="browse-sources-tab"
+    [hidden]="activeTab() !== 'sources'" tabindex="0">
+    @if (sourcesRequest.error(); as error) {
+      <app-state kind="error" [message]="problem(error).detail" (retry)="sourcesRequest.reload()"/>
+    } @else if (!sources()) {
+      <app-state kind="loading" artwork message="Загружаем источники…"/>
+    }
+    @if (sources(); as items) {
+      @if (items.length) {
+        <ul class="source-list">
+          @for (source of items; track source.sourceId) {
+            <li class="surface source-row">
+              <div class="source-info">
+                <span class="source-mark"><svg class="icon" [lucideIcon]="globe" [size]="23" aria-hidden="true"/></span>
+                <div>
+                  <h2>{{ source.sourceName }}</h2>
+                  @if (source.websiteUrl) { <p class="muted">{{ source.websiteUrl }}</p> }
+                </div>
+              </div>
+              <div class="actions source-actions">
+                <a class="button primary" routerLink="/catalog" [queryParams]="{sourceId: source.sourceId}">
+                  Открыть каталог <svg class="icon" [lucideIcon]="arrow" [size]="16" aria-hidden="true"/>
+                </a>
+                <button type="button" class="button secondary" [attr.aria-disabled]="busy().has(source.sourceId)"
+                  [attr.aria-busy]="busy().has(source.sourceId)" (click)="changeConnection(source, false, sourcesTab)">
+                  @if (busy().has(source.sourceId)) { <span class="spinner" aria-hidden="true"></span> Отключаем… }
+                  @else { Отключить }
+                </button>
+              </div>
+              @if (errors().get(source.sourceId); as error) { <p class="feedback error source-error" role="alert">{{ error }}</p> }
+            </li>
+          }
+        </ul>
+      } @else if (!sourcesRequest.error()) {
+        <app-state kind="empty" message="Пока нет подключённых источников.">
+          <a class="button primary" routerLink="/browse" [queryParams]="{tab: 'extensions'}" (click)="extensionsTab.focus()">
+            Перейти в расширения <svg class="icon" [lucideIcon]="arrow" [size]="16" aria-hidden="true"/>
+          </a>
+        </app-state>
+      }
+    }
+  </section>
+  <section class="browse-panel" id="browse-extensions-panel" role="tabpanel" aria-labelledby="browse-extensions-tab"
+    [hidden]="activeTab() !== 'extensions'" tabindex="0">
+    @if (extensionsRequest.error(); as error) {
+      <app-state kind="error" [message]="problem(error).detail" (retry)="extensionsRequest.reload()"/>
+    } @else if (!extensions()) {
+      <app-state kind="loading" artwork message="Загружаем расширения…"/>
+    }
+    @if (extensions(); as items) {
+      @if (items.length) {
+        <ul class="source-list">
+          @for (extension of items; track extension.sourceId) {
+            <li class="surface source-row">
+              <div class="source-info">
+                <span class="source-mark"><svg class="icon" [lucideIcon]="plug" [size]="23" aria-hidden="true"/></span>
+                <div>
+                  <h2>{{ extension.sourceName }}</h2>
+                  @if (extension.websiteUrl) { <p class="muted">{{ extension.websiteUrl }}</p> }
+                </div>
+              </div>
+              <div class="actions source-actions">
+                <button type="button" class="button extension-action" [class.primary]="!extension.enabled"
+                  [class.status-tag]="extension.enabled" [attr.aria-disabled]="extension.enabled || busy().has(extension.sourceId)"
+                  [attr.aria-busy]="busy().has(extension.sourceId)" (click)="!extension.enabled && changeConnection(extension, true)">
+                  @if (busy().has(extension.sourceId)) { <span class="spinner" aria-hidden="true"></span> Подключаем… }
+                  @else if (extension.enabled) { <svg class="icon" [lucideIcon]="check" [size]="16" aria-hidden="true"/> Подключено }
+                  @else { <svg class="icon" [lucideIcon]="plus" [size]="16" aria-hidden="true"/> Подключить }
+                </button>
+              </div>
+              @if (errors().get(extension.sourceId); as error) { <p class="feedback error source-error" role="alert">{{ error }}</p> }
+            </li>
+          }
+        </ul>
+      } @else if (!extensionsRequest.error()) {
+        <app-state kind="empty" message="Доступных расширений пока нет."/>
+      }
+    }
+  </section>
+</main>

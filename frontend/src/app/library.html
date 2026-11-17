@@ -1,0 +1,74 @@
+<main id="main-content" class="wrap section-page" tabindex="-1">
+  <div class="intro">
+    <div>
+      <h1 class="page-heading" #heading tabindex="-1">Библиотека</h1>
+      <p>Сохранённые тайтлы и позиции чтения</p>
+    </div>
+    <a class="button secondary" routerLink="/library/downloads">Скачанное</a>
+  </div>
+  <div aria-live="polite">
+    @if (notice()) {
+      <p class="feedback library-notice"><svg class="icon" [lucideIcon]="check" [size]="18" aria-hidden="true"/> {{ notice() }}</p>
+    }
+  </div>
+  @if (entries.isLoading()) {
+    <app-state kind="loading" artwork message="Загружаем библиотеку…"/>
+  } @else if (entries.error(); as error) {
+    <app-state kind="error" [message]="problem(error).detail" (retry)="entries.reload()"/>
+  } @else if (entries.hasValue()) {
+    <div class="library-list">
+      @for (entry of entries.value(); track entry.id) {
+        @let name = entry.title | localizedTitle:titleLanguage();
+        <article class="surface library-card">
+          <div class="library-summary">
+            <a [routerLink]="titleLink(entry.title)" [attr.aria-label]="'Открыть ' + name">
+              <app-cover [src]="entry.title.coverUrl" label=""/>
+            </a>
+            <div class="library-info">
+              <p class="meta">{{ entry.title.sourceName }}</p>
+              <h2><a [routerLink]="titleLink(entry.title)">{{ name }}</a></h2>
+              <span class="status-tag">{{ statuses[entry.status] }}</span>
+              @if (entry.note) { <p class="library-note">{{ entry.note }}</p> }
+              @if (entry.progress; as progress) {
+                <p class="muted library-position">{{ lang(progress.language) }} · Страница {{ progress.pageIndex + 1 }}</p>
+                <a class="continue" [routerLink]="readerLink(entry.title, progress.chapterId, progress.language)"
+                  [queryParams]="downloads.continueParams(entry.title, progress)">
+                  Продолжить чтение <svg class="icon" [lucideIcon]="arrow" [size]="16" aria-hidden="true"/>
+                </a>
+              }
+            </div>
+            <div class="actions library-actions">
+              <button class="button secondary" type="button" #edit [attr.aria-expanded]="editing() === entry.id"
+                [attr.aria-disabled]="editingBusy()" (click)="toggleEdit(entry.id, edit)">
+                <svg class="icon" [lucideIcon]="pencil" [size]="16" aria-hidden="true"/> Изменить
+              </button>
+              <button class="button secondary" type="button" aria-haspopup="dialog" [attr.aria-disabled]="editingBusy()" (click)="openDelete(entry)">
+                <svg class="icon" [lucideIcon]="trash" [size]="16" aria-hidden="true"/> Удалить
+              </button>
+            </div>
+          </div>
+          @if (editing() === entry.id) {
+            <app-library-editor [entry]="entry" (saving)="editingBusy.set($event)"
+              (saved)="apply($event)" (cancelled)="closeEdit()"/>
+          }
+        </article>
+      } @empty {
+        <app-state kind="empty" message="В библиотеке пока нет тайтлов.">
+          <a class="button primary" routerLink="/catalog">Перейти в каталог <svg class="icon" [lucideIcon]="arrow" [size]="16" aria-hidden="true"/></a>
+        </app-state>
+      }
+    </div>
+  }
+</main>
+<dialog #deleteDialog class="dialog" aria-labelledby="delete-heading" (cancel)="cancelDelete($event)">
+  <h2 id="delete-heading">Удалить из библиотеки?</h2>
+  <p class="muted">Запись «{{ removing()?.title | localizedTitle:titleLanguage() }}» будет удалена вместе с заметкой и позицией чтения.</p>
+  @if (deleteError(); as issue) { <p class="feedback error" role="alert">{{ issue.detail }}</p> }
+  <div class="actions dialog-actions">
+    <button class="button secondary" type="button" autofocus [attr.aria-disabled]="pending()" (click)="closeDelete()">Отмена</button>
+    <button class="button danger" type="button" [attr.aria-disabled]="pending()" (click)="remove()">
+      @if (pending()) { <span class="spinner" aria-hidden="true"></span> Удаляем… }
+      @else { Удалить }
+    </button>
+  </div>
+</dialog>

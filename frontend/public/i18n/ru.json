@@ -1,0 +1,13 @@
+{
+  "catalogFacts": {
+    "status": {
+      "ongoing": "Выходит",
+      "completed": "Завершено",
+      "hiatus": "На паузе",
+      "cancelled": "Отменено"
+    },
+    "chapters": "Глав в читалке: {{count}}",
+    "countPending": "Уточняем число глав…",
+    "countError": "Число глав недоступно"
+  }
+}

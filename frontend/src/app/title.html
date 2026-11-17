@@ -1,0 +1,196 @@
+<main id="main-content" class="wrap section-page" tabindex="-1">
+  <a class="back-link" routerLink="/catalog" [queryParams]="backParams()">
+    <svg class="icon" [lucideIcon]="back" [size]="18" aria-hidden="true"/> Каталог
+  </a>
+  @if (title.isLoading()) {
+    <app-state kind="loading" artwork message="Загружаем тайтл…"/>
+  } @else if (title.error(); as error) {
+    <app-state kind="error" [message]="problem(error).detail" (retry)="title.reload()"/>
+  } @else if (title.hasValue()) {
+    @let item = title.value();
+    @let name = item | localizedTitle:titleLanguage();
+    <section class="title-hero" [class.title-hero-portrait]="item.sourceId !== 'peppercarrot'" aria-label="О тайтле">
+      <app-cover [src]="item.coverUrl" [label]="'Обложка ' + name" [eager]="true"/>
+      <div>
+        <p class="eyebrow">{{ item.sourceName }}</p>
+        <h1 class="page-heading" [class.long-title]="name.length > 45">{{ name }}</h1>
+        @if (item.author) { <p class="muted">{{ item.author }}</p> }
+        @if (item.description) { <p class="title-description">{{ item.description }}</p> }
+        @if (item.tags.length) {
+          <section class="title-tags" aria-label="Теги">
+            <h2>Теги</h2>
+            <div class="tag-list">
+              @for (tag of item.tags; track tag.id) {
+                <a class="status-tag tag-link" routerLink="/catalog"
+                  [queryParams]="{sourceId: item.sourceId, tagId: tag.id}">{{ tagName(tag, titleLanguage()) }}</a>
+              }
+            </div>
+          </section>
+        }
+        <div class="title-meta">
+          <a [href]="item.sourceUrl" target="_blank" rel="noopener noreferrer">
+            Источник <svg class="icon" [lucideIcon]="external" [size]="15" aria-hidden="true"/>
+          </a>
+          @if (item.license; as license) {
+            <a [href]="license.url" target="_blank" rel="noopener noreferrer">{{ license.code }}</a>
+          }
+        </div>
+        @if (firstChapter(); as first) {
+          <a class="button primary" [routerLink]="readerLink(item, first.id, defaultLanguage(first.languages))">
+            <svg class="icon" [lucideIcon]="book" [size]="18" aria-hidden="true"/> Начать читать
+          </a>
+        }
+      </div>
+    </section>
+    <div class="title-columns">
+      <aside class="surface library-add" aria-label="Библиотека">
+        @if (library.isLoading()) {
+          <app-state kind="loading" message="Проверяем библиотеку…"/>
+        } @else if (entry(); as existing) {
+          <h2>В библиотеке</h2>
+          <p class="feedback"><svg class="icon" [lucideIcon]="check" [size]="18" aria-hidden="true"/> {{ statuses[existing.status] }}</p>
+          <a class="button secondary" routerLink="/library">Открыть библиотеку <svg class="icon" [lucideIcon]="arrow" [size]="16" aria-hidden="true"/></a>
+        } @else {
+          @for (key of [item]; track key.sourceId + '/' + key.externalTitleId) {
+            <app-add-entry [title]="key"/>
+          }
+        }
+      </aside>
+      <section class="chapters" id="chapters" aria-labelledby="chapter-heading">
+        <div class="section-heading chapter-heading">
+          <h2 id="chapter-heading">Главы</h2>
+          @if (chapters.hasValue()) { <span class="count">{{ chapters.value().length }}</span> }
+          @if (downloadSupported()) {
+            <a class="back-link" [routerLink]="[]" queryParamsHandling="preserve" fragment="title-downloads">Скачанные главы</a>
+          }
+        </div>
+        @if (chapters.isLoading()) {
+          <app-state kind="loading" message="Загружаем главы…"/>
+        } @else if (chapters.error(); as error) {
+          <app-state kind="error" [message]="problem(error).detail" (retry)="chapters.reload()"/>
+        } @else if (chapters.hasValue()) {
+          @if (availableLanguages().length) {
+            <p class="muted languages">Доступные языки
+              @for (language of availableLanguages(); track language) { <span>{{ lang(language) }}</span> }
+            </p>
+          }
+          <ol class="chapter-list">
+            @for (chapter of chapters.value(); track chapter.id) {
+              <li class="chapter-row" [class.has-download]="downloadSupported()">
+                <span class="chapter-number">{{ chapter.number ?? '—' }}</span>
+                <div>
+                  <h3>{{ chapter.title }}</h3>
+                  @if (chapter.pageCount > 0) { <p class="muted">Страниц: {{ chapter.pageCount }}</p> }
+                  @if (downloadSupported()) {
+                    @for (language of chapter.languages; track language) {
+                      @if (downloads.find(chapter.id, language); as saved) {
+                        <p class="muted" [class.error]="saved.status === 'FAILED'" role="status">
+                          {{ language.toUpperCase() }} · {{ downloadState(saved) }}
+                          @if (saved.status === 'READY') {
+                            <a [routerLink]="offlineLink(saved)">Читать офлайн</a>
+                          }
+                        </p>
+                      }
+                    }
+                  }
+                </div>
+                <div class="chapter-languages">
+                  @for (language of chapter.languages; track language) {
+                    <a class="button secondary compact" [routerLink]="readerLink(item, chapter.id, language)"
+                      [attr.aria-label]="chapter.title + ' — ' + lang(language)">
+                      {{ language.toUpperCase() }}
+                      <svg class="icon" [lucideIcon]="chevron" [size]="14" aria-hidden="true"/>
+                    </a>
+                  } @empty { <span class="muted">Перевод недоступен</span> }
+                </div>
+                @if (downloadSupported() && chapter.languages.length) {
+                  @let oneLanguage = chapter.languages.length === 1 ? chapter.languages[0] : undefined;
+                  <button class="button secondary compact chapter-download" type="button"
+                    [attr.aria-haspopup]="!oneLanguage || downloads.find(chapter.id, oneLanguage) ? 'dialog' : null"
+                    [disabled]="!!oneLanguage && downloads.starting(chapter.id, oneLanguage)" (click)="chooseDownload(chapter)">
+                    @if (oneLanguage && downloads.starting(chapter.id, oneLanguage)) { Отправляем… }
+                    @else if (oneLanguage && downloads.find(chapter.id, oneLanguage)) { Загрузка · {{ oneLanguage.toUpperCase() }} }
+                    @else { Скачать главу @if (oneLanguage) { · {{ oneLanguage.toUpperCase() }} } }
+                  </button>
+                }
+              </li>
+            } @empty {
+              <li><app-state kind="empty" message="У этого тайтла пока нет глав."/></li>
+            }
+          </ol>
+        }
+      </section>
+    </div>
+  }
+  @if (downloadSupported() || downloads.data.error()) {
+    <section id="title-downloads" class="title-downloads" aria-labelledby="local-chapters-heading">
+      <div class="section-heading">
+        <h2 id="local-chapters-heading">Скачанные главы</h2>
+        <a class="back-link" routerLink="/library/downloads">Всё скачанное</a>
+      </div>
+      @if (downloads.data.error(); as error) {
+        <app-state kind="error" [message]="problem(error).detail" (retry)="downloads.data.reload()"/>
+      } @else if (downloads.items().length) {
+        <ul class="download-list">
+          @for (saved of downloads.items(); track saved.id) {
+            <li class="surface download-card">
+              <div>
+                <p class="meta">{{ lang(saved.language) }}</p>
+                <h3>Глава {{ chapterLabel(saved) }} @if (saved.chapterTitle) { · {{ saved.chapterTitle }} }</h3>
+                <p class="muted" [class.error]="saved.status === 'FAILED'" role="status">{{ downloadState(saved) }}</p>
+                @if (saved.status === 'DOWNLOADING' && saved.totalPages; as total) {
+                  <progress aria-label="Прогресс скачивания" [value]="saved.pagesDone" [max]="total"></progress>
+                }
+              </div>
+              @if (saved.status === 'READY') {
+                <a class="button secondary" [routerLink]="offlineLink(saved)">Читать офлайн</a>
+              } @else if (saved.status === 'FAILED') {
+                <button class="button secondary" type="button" [disabled]="downloads.busy().has(saved.id)"
+                  (click)="downloads.retry(saved)">Повторить</button>
+              }
+            </li>
+          }
+        </ul>
+      } @else { <p class="muted">Скачанных глав пока нет.</p> }
+    </section>
+  }
+  @if (choosing() ? '' : downloads.issue(); as issue) { <p class="feedback error" role="alert">{{ issue }}</p> }
+</main>
+<dialog #downloadDialog class="dialog" aria-labelledby="download-language-heading" (close)="choosing.set(undefined)">
+  <div class="dialog-heading">
+    <h2 id="download-language-heading">Переводы для скачивания</h2>
+    <button type="button" class="button secondary compact" autofocus (click)="closeDownload()">Закрыть</button>
+  </div>
+  @if (choosing(); as chapter) {
+    <p class="muted">Глава {{ chapter.number ?? '—' }} · {{ chapter.title }}</p>
+    <ul class="download-list">
+      @for (language of chapter.languages; track language) {
+        <li class="download-language">
+          <div>
+            <strong>{{ lang(language) }}</strong>
+            @if (downloads.find(chapter.id, language); as saved) {
+              <p class="muted" [class.error]="saved.status === 'FAILED'" role="status">{{ downloadState(saved) }}</p>
+              @if (saved.status === 'DOWNLOADING' && saved.totalPages; as total) {
+                <progress [attr.aria-label]="lang(language)" [value]="saved.pagesDone" [max]="total"></progress>
+              }
+            }
+          </div>
+          @if (downloads.find(chapter.id, language); as saved) {
+            @if (saved.status === 'READY') {
+              <a class="button secondary" [routerLink]="offlineLink(saved)" (click)="closeDownload()">Читать офлайн</a>
+            } @else if (saved.status === 'FAILED') {
+              <button class="button secondary" type="button" [disabled]="downloads.busy().has(saved.id)"
+                (click)="downloads.retry(saved)">Повторить</button>
+            }
+          } @else {
+            <button class="button primary" type="button" [attr.aria-label]="'Скачать · ' + lang(language)"
+              [disabled]="downloads.starting(chapter.id, language)" (click)="downloads.start(chapter.id, language)">
+              {{ downloads.starting(chapter.id, language) ? 'Отправляем…' : 'Скачать' }}
+            </button>
+          }
+        </li>
+      }
+    </ul>
+    @if (downloads.issue(); as issue) { <p class="feedback error" role="alert">{{ issue }}</p> }
+  }
+</dialog>

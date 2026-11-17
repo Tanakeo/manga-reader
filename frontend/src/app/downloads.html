@@ -1,0 +1,65 @@
+<main id="main-content" class="wrap section-page" tabindex="-1">
+  <a class="back-link" routerLink="/library">В библиотеку</a>
+  <div class="intro">
+    <div>
+      <h1 class="page-heading" #heading tabindex="-1">Скачанное</h1>
+      <p>Главы для чтения без интернета</p>
+    </div>
+  </div>
+  @if (confirming() ? '' : store.issue(); as issue) {
+    <p class="feedback error" role="alert">{{ issue }}</p>
+  }
+  @if (store.data.error(); as error) {
+    <app-state kind="error" [message]="problem(error).detail" (retry)="store.data.reload()"/>
+  } @else if (store.data.hasValue()) {
+    <ul class="download-list">
+      @for (item of store.items(); track item.id) {
+        <li class="surface download-card">
+          <div>
+            <p class="meta">{{ item.title | localizedTitle:locale() }} · {{ lang(item.language) }}</p>
+            <h2>Глава {{ chapterLabel(item) }} @if (item.chapterTitle) { · {{ item.chapterTitle }} }</h2>
+            <p class="muted" [class.error]="!!item.error" role="status">{{ state(item) }}</p>
+            @if (item.status === 'DOWNLOADING' && item.totalPages; as total) {
+              <progress [attr.aria-label]="'Скачивание главы ' + chapterLabel(item)" [value]="item.pagesDone" [max]="total"></progress>
+            }
+          </div>
+          <div class="actions">
+            @if (item.status === 'READY') {
+              <a class="button primary" [routerLink]="link(item)">Читать офлайн</a>
+            }
+            @if (item.status === 'FAILED') {
+              <button class="button secondary" type="button" [disabled]="store.busy().has(item.id)" (click)="store.retry(item)">
+                {{ store.busy().has(item.id) ? 'Повторяем…' : 'Повторить' }}
+              </button>
+            }
+            @if (item.status === 'READY' || item.status === 'FAILED' || (item.status === 'DELETING' && item.error)) {
+              <button class="button secondary" type="button" aria-haspopup="dialog"
+                [disabled]="store.busy().has(item.id)" (click)="openDelete(item)">
+                {{ item.status === 'DELETING' ? 'Повторить удаление' : 'Удалить загрузку' }}
+              </button>
+            }
+          </div>
+        </li>
+      } @empty {
+        <li><app-state kind="empty" message="Скачанных глав пока нет. Скачать перевод можно на карточке Pepper&amp;Carrot.">
+          <a class="button primary" routerLink="/catalog/peppercarrot/pepper-and-carrot">Открыть Pepper&amp;Carrot</a>
+        </app-state></li>
+      }
+    </ul>
+  } @else {
+    <app-state kind="loading" artwork message="Загружаем список глав…"/>
+  }
+</main>
+<dialog #deleteDialog class="dialog" aria-labelledby="delete-download-heading"
+  (cancel)="cancel($event)" (close)="confirming.set(undefined)">
+  @if (confirming(); as item) {
+    @let busy = store.busy().has(item.id);
+    <h2 id="delete-download-heading">Удалить загрузку?</h2>
+    <p class="muted">Глава {{ chapterLabel(item) }} · {{ lang(item.language) }}</p>
+    @if (store.issue(); as issue) { <p class="feedback error" role="alert">{{ issue }}</p> }
+    <div class="actions dialog-actions">
+      <button class="button secondary" type="button" autofocus [disabled]="busy" (click)="close()">Отмена</button>
+      <button class="button danger" type="button" [disabled]="busy" (click)="remove(item)">{{ busy ? 'Удаляем…' : 'Удалить' }}</button>
+    </div>
+  }
+</dialog>

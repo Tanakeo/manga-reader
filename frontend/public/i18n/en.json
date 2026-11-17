@@ -1,0 +1,13 @@
+{
+  "catalogFacts": {
+    "status": {
+      "ongoing": "Ongoing",
+      "completed": "Completed",
+      "hiatus": "On hiatus",
+      "cancelled": "Cancelled"
+    },
+    "chapters": "Chapters in reader: {{count}}",
+    "countPending": "Checking chapter count…",
+    "countError": "Chapter count unavailable"
+  }
+}

@@ -1,0 +1,72 @@
+<form class="editor" (ngSubmit)="save()" [attr.aria-busy]="pending()">
+  <h3>Редактировать запись</h3>
+  <fieldset [disabled]="pending()">
+    <div class="field">
+      <label for="edit-status">Статус</label>
+      <select id="edit-status" name="status" [ngModel]="status()" (ngModelChange)="status.set($event)" required
+        [attr.aria-invalid]="!!errorFor('status')" aria-describedby="edit-status-error">
+        @for (option of options; track option[0]) { <option [value]="option[0]">{{ option[1] }}</option> }
+      </select>
+      <span class="field-error" id="edit-status-error">{{ errorFor('status') }}</span>
+    </div>
+    <div class="field">
+      <label for="edit-note">Заметка <small>необязательно</small></label>
+      <textarea id="edit-note" name="note" [ngModel]="note()" (ngModelChange)="note.set($event)" rows="3" maxlength="2000"
+        [attr.aria-invalid]="!!errorFor('note')" aria-describedby="edit-note-error"></textarea>
+      <span class="field-error" id="edit-note-error">{{ errorFor('note') }}</span>
+    </div>
+    <label class="field">
+      <span>Позиция чтения</span>
+      <select name="mode" [ngModel]="mode()" (ngModelChange)="mode.set($event)">
+        <option value="keep">Оставить как есть</option>
+        <option value="update">Указать главу и страницу</option>
+        @if (entry().progress) { <option value="clear">Сбросить позицию</option> }
+      </select>
+    </label>
+    @if (mode() === 'update') {
+      @if (chapters.isLoading()) {
+        <app-state kind="loading" message="Загружаем главы…"/>
+      } @else if (chapters.error(); as error) {
+        <app-state kind="error" [message]="problem(error).detail" (retry)="chapters.reload()"/>
+      } @else if (chapters.hasValue()) {
+        <div class="progress-fields">
+          <div class="field">
+            <label for="edit-chapter">Глава</label>
+            <select id="edit-chapter" name="chapter" [ngModel]="chapterId()" (ngModelChange)="setChapter($event)" required
+              [attr.aria-invalid]="!!errorFor('progress.chapterId')" aria-describedby="edit-chapter-error">
+              <option value="">Выберите главу</option>
+              @for (chapter of chapters.value(); track chapter.id) {
+                <option [value]="chapter.id" [disabled]="!chapter.languages.length">{{ chapter.number !== null ? chapter.number + '. ' : '' }}{{ chapter.title }}</option>
+              }
+            </select>
+            <span class="field-error" id="edit-chapter-error">{{ errorFor('progress.chapterId') }}</span>
+          </div>
+          <div class="field">
+            <label for="edit-language">Язык</label>
+            <select id="edit-language" name="language" [ngModel]="language()" (ngModelChange)="language.set($event)" [disabled]="!chapter()" required
+              [attr.aria-invalid]="!!errorFor('progress.language')" aria-describedby="edit-language-error">
+              <option value="">Выберите язык</option>
+              @for (code of chapter()?.languages ?? []; track code) { <option [value]="code">{{ lang(code) }}</option> }
+            </select>
+            <span class="field-error" id="edit-language-error">{{ errorFor('progress.language') }}</span>
+          </div>
+          <div class="field">
+            <label for="edit-page">Страница</label>
+            <input id="edit-page" name="page" type="number" min="1" step="1" [ngModel]="pageNumber()"
+              (ngModelChange)="pageNumber.set($event); invalidPage.set(false)" [disabled]="!chapter()"
+              [attr.aria-invalid]="!!errorFor('progress.pageIndex')" aria-describedby="edit-page-error">
+            <span class="field-error" id="edit-page-error">{{ errorFor('progress.pageIndex') }}</span>
+          </div>
+        </div>
+      }
+    }
+  </fieldset>
+  @if (issue(); as issue) { <p class="feedback error" role="alert">{{ issue.detail }}</p> }
+  <div class="actions editor-actions">
+    <button class="button primary" type="submit" [disabled]="progressIncomplete()" [attr.aria-disabled]="pending()">
+      @if (pending()) { <span class="spinner" aria-hidden="true"></span> Сохраняем… }
+      @else { Сохранить }
+    </button>
+    <button class="button secondary" type="button" [disabled]="pending()" (click)="cancelled.emit()">Отмена</button>
+  </div>
+</form>
