@@ -1,17 +1,12 @@
 <main id="main-content" class="wrap catalog" tabindex="-1">
   <div class="intro">
     <div>
-      <h1 class="page-heading">Каталог</h1>
+      <h1 class="page-heading" tabindex="-1">Каталог</h1>
       <p>Манга и комиксы из открытых источников</p>
     </div>
-    <div class="filters" role="search" aria-label="Поиск по каталогу">
-      <div class="search-field">
-        <label for="catalog-search">{{ searchLabel() }}</label>
-        <div class="search">
-          <svg class="icon" [lucideIcon]="magnify" [size]="16" aria-hidden="true"/>
-          <input id="catalog-search" type="search" placeholder="Поиск по названию"
-            maxlength="120" [ngModel]="search()" (ngModelChange)="editSearch($event)">
-        </div>
+    <div class="filters">
+      <div class="catalog-search">
+        <app-command-search [value]="query().q" [label]="searchLabel()" (search)="setSearch($event)"/>
       </div>
       <label class="source-select">
         <select aria-label="Источник" [ngModel]="sourceId()" (ngModelChange)="setSource($event)"
@@ -76,7 +71,7 @@
               <option value="">По умолчанию</option>
               @for (sort of source.sorts; track sort) {
                 @if (sortNames[sort]; as name) {
-                  <option [value]="sort" [disabled]="sort === 'relevance' && !search().trim()">{{ name }}</option>
+                <option [value]="sort" [disabled]="sort === 'relevance' && !query().q">{{ name }}</option>
                 }
               }
             </select>
@@ -130,27 +125,29 @@
   } @else if (result.hasValue()) {
     @if (featured(); as item) {
       @let name = item | localizedTitle:titleLanguage();
-      <article class="feature">
+      <article class="feature" data-title-card>
         <div class="feature-copy">
           <p class="eyebrow">Из каталога</p>
-          <h2 [class.long-title]="name.length > 45">{{ name }}</h2>
+          <h2 [class.long-title]="name.length > 45">
+            <a [titlePreview]="item" [routerLink]="titleLink(item)" [queryParams]="titleContext()">{{ name }}</a>
+          </h2>
           @if (detail.hasValue() && detail.value().description; as description) {
             <p class="feature-description">{{ description }}</p>
           }
           <p class="meta">@if (item.author) { {{ item.author }} <span>·</span> } {{ item.sourceName }}</p>
           <app-catalog-facts [item]="item"/>
-          <a class="button primary feature-action" [routerLink]="titleLink(item)" [queryParams]="titleContext()">
+          <a class="button primary feature-action" [titlePreview]="item" [routerLink]="titleLink(item)" [queryParams]="titleContext()">
             Открыть тайтл <svg class="icon" [lucideIcon]="arrow" [size]="18" aria-hidden="true"/>
           </a>
         </div>
-        <a class="feature-art" [attr.aria-label]="'Открыть ' + name" [routerLink]="titleLink(item)" [queryParams]="titleContext()">
+        <a class="feature-art" [titlePreview]="item" [attr.aria-label]="'Открыть ' + name" [routerLink]="titleLink(item)" [queryParams]="titleContext()">
           <app-cover [src]="item.coverUrl" [titleKey]="item" [label]="'Обложка ' + name" [eager]="true"/>
         </a>
       </article>
     } @else if (result.value().length) {
       <div class="catalog-grid">
         @for (item of result.value(); track item.sourceId + '/' + item.externalTitleId) {
-          <a class="catalog-card" [routerLink]="titleLink(item)" [queryParams]="titleContext()">
+          <a class="catalog-card" data-title-card [titlePreview]="item" [routerLink]="titleLink(item)" [queryParams]="titleContext()">
             <app-cover [src]="item.coverUrl" [titleKey]="item" label=""/>
             <div>
               <h2>{{ item | localizedTitle:titleLanguage() }}</h2>

@@ -1,21 +1,25 @@
-<main id="main-content" class="wrap section-page" tabindex="-1">
-  <a class="back-link" routerLink="/catalog" [queryParams]="backParams()">
-    <svg class="icon" [lucideIcon]="back" [size]="18" aria-hidden="true"/> Каталог
+<main id="main-content" class="wrap section-page title-page" data-title-page [class.title-is-arriving]="arriving()" tabindex="-1">
+  <a class="back-link" [href]="backHref()" (click)="goBack($event)">
+    <svg class="icon" [lucideIcon]="back" [size]="18" aria-hidden="true"/> {{ backLabel() }}
   </a>
-  @if (title.isLoading()) {
+  @if (title.isLoading() && !displayTitle()) {
     <app-state kind="loading" artwork message="Загружаем тайтл…"/>
-  } @else if (title.error(); as error) {
+  } @else if (!displayTitle() && title.error(); as error) {
     <app-state kind="error" [message]="problem(error).detail" (retry)="title.reload()"/>
-  } @else if (title.hasValue()) {
-    @let item = title.value();
+  } @else if (displayTitle(); as item) {
     @let name = item | localizedTitle:titleLanguage();
     <section class="title-hero" [class.title-hero-portrait]="item.sourceId !== 'peppercarrot'" aria-label="О тайтле">
-      <app-cover [src]="item.coverUrl" [titleKey]="item" [label]="'Обложка ' + name" [eager]="true"/>
+      <app-cover data-title-cover [src]="item.coverUrl" [titleKey]="item" [label]="'Обложка ' + name" [eager]="true"/>
       <div>
         <p class="eyebrow">{{ item.sourceName }}</p>
-        <h1 class="page-heading" [class.long-title]="name.length > 45">{{ name }}</h1>
+        <h1 class="page-heading" data-title-heading tabindex="-1" [class.long-title]="name.length > 45">{{ name }}</h1>
         @if (item.author) { <p class="muted">{{ item.author }}</p> }
         @if (item.description) { <p class="title-description">{{ item.description }}</p> }
+        @if (title.isLoading()) { <p class="muted title-summary-pending" role="status">Загружаем описание…</p> }
+        @if (title.error(); as error) {
+          <p class="error" role="alert">{{ problem(error).detail }}</p>
+          <button class="button secondary" type="button" (click)="title.reload()">Повторить</button>
+        }
         @if (item.tags.length) {
           <section class="title-tags" aria-label="Теги">
             <h2>Теги</h2>
@@ -28,16 +32,18 @@
           </section>
         }
         <div class="title-meta">
+          @if (item.sourceUrl) {
           <a [href]="item.sourceUrl" target="_blank" rel="noopener noreferrer">
             Источник <svg class="icon" [lucideIcon]="external" [size]="15" aria-hidden="true"/>
           </a>
+          }
           @if (item.license; as license) {
             <a [href]="license.url" target="_blank" rel="noopener noreferrer">{{ license.code }}</a>
           }
         </div>
         @if (firstChapter(); as first) {
-          <a class="button primary" [routerLink]="readerLink(item, first.id, defaultLanguage(first.languages))">
-            <svg class="icon" [lucideIcon]="book" [size]="18" aria-hidden="true"/> Начать читать
+          <a class="button primary" magneticButton [routerLink]="readerLink(item, first.id, defaultLanguage(first.languages))">
+            <span class="magnetic-content"><svg class="icon" [lucideIcon]="book" [size]="18" aria-hidden="true"/> Начать читать</span>
           </a>
         }
       </div>
@@ -49,7 +55,9 @@
         } @else if (entry(); as existing) {
           <h2>В библиотеке</h2>
           <p class="feedback"><svg class="icon" [lucideIcon]="check" [size]="18" aria-hidden="true"/> {{ statuses[existing.status] }}</p>
-          <a class="button secondary" routerLink="/library">Открыть библиотеку <svg class="icon" [lucideIcon]="arrow" [size]="16" aria-hidden="true"/></a>
+          <a class="button secondary" routerLink="/library" [queryParams]="libraryStatusParams(existing.status)">
+            Открыть библиотеку <svg class="icon" [lucideIcon]="arrow" [size]="16" aria-hidden="true"/>
+          </a>
         } @else {
           @for (key of [item]; track key.sourceId + '/' + key.externalTitleId) {
             <app-add-entry [title]="key"/>

@@ -2,32 +2,33 @@ import { Component, computed, DestroyRef, inject, signal } from '@angular/core';
 import { rxResource, takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, NavigationStart, Router, RouterLink } from '@angular/router';
-import { LucideArrowUpRight as ArrowUpRight, LucideChevronDown as ChevronDown, LucideDynamicIcon, LucideSearch as Search } from '@lucide/angular';
+import { LucideArrowUpRight as ArrowUpRight, LucideChevronDown as ChevronDown, LucideDynamicIcon } from '@lucide/angular';
 import { Api, CatalogQuery, problem, Tag, titleLink } from './api';
 import { CatalogFacts } from './catalog-facts';
 import { catalogParams, catalogSorts, normalizeCatalog, readCatalog, tagLimit, tagName } from './catalog-query';
 import { Cover, State } from './common';
 import { LocalizedTitle, TitleLocale } from './title-locale';
+import { CommandSearch } from './shared/command-search';
+import { TitlePreviewLink } from './shared/title-preview-link';
+import { TitleDetails } from './shared/title-details';
 
 @Component({
-  imports: [FormsModule, RouterLink, LucideDynamicIcon, Cover, State, CatalogFacts, LocalizedTitle],
+  imports: [FormsModule, RouterLink, LucideDynamicIcon, Cover, State, CatalogFacts, LocalizedTitle, CommandSearch, TitlePreviewLink],
   templateUrl: './catalog.html',
 })
 export class Catalog {
   private readonly api = inject(Api);
+  private readonly details = inject(TitleDetails);
   private readonly router = inject(Router);
   private readonly route = inject(ActivatedRoute);
-  private timer?: ReturnType<typeof setTimeout>;
   private normalization?: ReturnType<typeof setTimeout>;
   protected readonly query = signal(readCatalog(this.route.snapshot.queryParamMap), {
     equal: (a, b) => a.sourceId === b.sourceId && a.q === b.q && a.sort === b.sort
       && a.tagIds.join(',') === b.tagIds.join(','),
   });
-  protected readonly search = signal('');
   protected readonly titleLanguage = inject(TitleLocale).language;
   protected readonly sourceId = computed(() => this.query().sourceId);
   protected readonly arrow = ArrowUpRight;
-  protected readonly magnify = Search;
   protected readonly chevron = ChevronDown;
   protected readonly problem = problem;
   protected readonly titleLink = titleLink;
@@ -81,18 +82,14 @@ export class Catalog {
   });
   protected readonly detail = rxResource({
     params: () => this.featured(),
-    stream: ({params}) => this.api.title(params),
+    stream: ({params}) => this.details.load(params),
   });
 
   constructor() {
     this.route.queryParamMap.pipe(takeUntilDestroyed()).subscribe(params => {
-      clearTimeout(this.timer);
       clearTimeout(this.normalization);
       const query = readCatalog(params);
       this.query.set(query);
-      if (this.search().trim() !== query.q || this.router.currentNavigation()?.trigger === 'popstate') {
-        this.search.set(query.q);
-      }
       if (params.getAll('sourceId').join(',') !== query.sourceId ||
           params.getAll('q').join(',') !== query.q || params.getAll('sort').join(',') !== query.sort ||
           params.getAll('tagId').join(',') !== query.tagIds.join(',') ||
@@ -102,12 +99,10 @@ export class Catalog {
     });
     this.router.events.pipe(takeUntilDestroyed()).subscribe(event => {
       if (event instanceof NavigationStart) {
-        clearTimeout(this.timer);
         clearTimeout(this.normalization);
       }
     });
     inject(DestroyRef).onDestroy(() => {
-      clearTimeout(this.timer);
       clearTimeout(this.normalization);
     });
   }
@@ -122,34 +117,30 @@ export class Catalog {
   }
 
   protected setSource(sourceId: string) {
-    this.apply({sourceId, q: this.search(), tagIds: [], sort: ''});
+    this.apply({sourceId, q: this.query().q, tagIds: [], sort: ''});
   }
 
-  protected editSearch(q: string) {
-    this.search.set(q);
-    clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.apply({...this.query(), q}, true), 220);
+  protected setSearch(q: string) {
+    this.apply({...this.query(), q});
   }
 
   protected setSort(sort: string) {
-    this.apply({...this.query(), q: this.search(), sort});
+    this.apply({...this.query(), sort});
   }
 
   protected toggleTag(id: string) {
     const ids = this.query().tagIds;
     if (ids.includes(id)) this.removeTags([id]);
-    else if (ids.length < tagLimit) this.apply({...this.query(), q: this.search(), tagIds: [...ids, id]});
+    else if (ids.length < tagLimit) this.apply({...this.query(), tagIds: [...ids, id]});
   }
 
   protected removeTags(ids = this.query().tagIds) {
-    this.apply({...this.query(), q: this.search(), tagIds: this.query().tagIds.filter(id => !ids.includes(id))});
+    this.apply({...this.query(), tagIds: this.query().tagIds.filter(id => !ids.includes(id))});
   }
 
   private apply(query: CatalogQuery, replaceUrl = false) {
-    clearTimeout(this.timer);
     clearTimeout(this.normalization);
     const normalized = normalizeCatalog(query);
-    if (!replaceUrl) this.search.set(normalized.q);
     void this.router.navigate([], {
       relativeTo: this.route,
       queryParams: catalogParams(normalized),

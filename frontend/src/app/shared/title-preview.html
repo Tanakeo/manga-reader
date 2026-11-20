@@ -1,0 +1,49 @@
+<dialog #dialog class="title-preview-dialog" aria-labelledby="title-preview-heading"
+  (cancel)="cancel($event)" (click)="backdrop($event)" (keydown)="trapFocus($event)">
+  <div #surface class="morph-surface" aria-hidden="true"></div>
+  <div class="morph-actors" [class.resting]="!moving()" aria-hidden="true">
+    <div #coverActor class="morph-cover">
+      <app-cover [src]="imageUrl()" [titleKey]="displayed()?.key" label="" [eager]="true"/>
+    </div>
+    <div #titleActor class="morph-title">
+      {{ (item() | localizedTitle:language()) || 'Манга' }}
+    </div>
+  </div>
+  @if (displayed(); as selected) {
+    <article #panel class="preview-panel" [class.moving]="moving()" [class.portrait]="portrait()">
+      <button class="button secondary icon-button preview-close" type="button" autofocus aria-label="Закрыть превью"
+        (click)="state.dismiss()"><svg [lucideIcon]="closeIcon" [size]="20" aria-hidden="true"/></button>
+      <div #coverSlot class="preview-cover">
+        <app-cover [src]="imageUrl()" [titleKey]="selected.key" [label]="'Обложка ' + (item() | localizedTitle:language())" [eager]="true"/>
+      </div>
+      <div class="preview-info">
+        <p class="eyebrow">{{ item()?.sourceName ?? 'Превью тайтла' }}</p>
+        <h2 #heading id="title-preview-heading" class="preview-heading">{{ (item() | localizedTitle:language()) || 'Манга' }}</h2>
+        <div class="preview-scroll">
+          @if (item(); as title) {
+            @if (title.author) { <p class="muted">{{ title.author }}</p> }
+            <app-catalog-facts [item]="title"/>
+          }
+          <div class="preview-description" aria-live="polite">
+            @if (detail.isLoading()) {
+              <p class="muted">Загружаем описание…</p>
+              <span class="preview-skeleton" aria-hidden="true"></span>
+              <span class="preview-skeleton" aria-hidden="true"></span>
+            } @else if (detail.error(); as error) {
+              <p class="error">{{ problem(error).detail }}</p>
+              <button class="button secondary compact" type="button" (click)="detail.reload()">Повторить</button>
+            } @else {
+              <p>{{ description() || 'Описание пока недоступно.' }}</p>
+            }
+          </div>
+        </div>
+        <div class="preview-footer">
+          @if (state.navigationIssue()) { <p class="error" role="alert">{{ state.navigationIssue() }}</p> }
+          <a class="button primary" [href]="selected.target" (click)="openPage($event)">
+            Открыть страницу манги <svg [lucideIcon]="arrow" [size]="17" aria-hidden="true"/>
+          </a>
+        </div>
+      </div>
+    </article>
+  }
+</dialog>

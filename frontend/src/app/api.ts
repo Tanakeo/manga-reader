@@ -125,6 +125,17 @@ export interface LibraryEntry {
   updatedAt: string;
 }
 
+export interface LibrarySection {
+  id: string;
+  name: string;
+  entryIds: string[];
+  systemKey: 'planned' | 'reading' | 'completed' | 'downloads' | null;
+}
+
+export function libraryStatusParams(status: ReadingStatus) {
+  return {section: status.toLowerCase()};
+}
+
 export interface LibraryUpdate {
   status?: ReadingStatus;
   note?: string | null;
@@ -252,6 +263,34 @@ export class Api {
 
   library() {
     return this.http.get<{items: LibraryEntry[]}>(this.libraryUrl).pipe(map(data => data.items));
+  }
+
+  librarySections() {
+    return this.http.get<{items: LibrarySection[]}>(this.libraryUrl + '/sections').pipe(map(data => data.items));
+  }
+
+  createLibrarySection(name: string) {
+    return this.http.post<LibrarySection>(this.libraryUrl + '/sections', {name});
+  }
+
+  renameLibrarySection(id: string, name: string) {
+    return this.http.patch<LibrarySection>(this.sectionUrl(id), {name});
+  }
+
+  deleteLibrarySection(id: string) {
+    return this.http.delete<void>(this.sectionUrl(id));
+  }
+
+  addLibrarySectionEntries(id: string, entryIds: string[]) {
+    return this.http.post<LibrarySection>(this.sectionUrl(id) + '/entries', {entryIds});
+  }
+
+  removeLibrarySectionEntry(id: string, entryId: string) {
+    return this.http.delete<LibrarySection>(this.sectionUrl(id) + '/entries/' + encodeURIComponent(entryId));
+  }
+
+  private sectionUrl(id: string) {
+    return this.libraryUrl + '/sections/' + encodeURIComponent(id);
   }
 
   add(key: TitleKey, status: ReadingStatus, note: string | null) {

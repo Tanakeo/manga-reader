@@ -13,6 +13,9 @@
     </button>
   </div>
 </header>
+<div class="reader-dock-row">
+  <app-navigation-dock/>
+</div>
 <main id="main-content" class="paper" tabindex="-1">
   @if (waiting()) {
     <app-state kind="loading" artwork message="Загружаем страницы…"/>

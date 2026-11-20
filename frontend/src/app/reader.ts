@@ -10,6 +10,7 @@ import { Api, languageName, Problem, problem, readerLink, sameTitle, titleLink }
 import { SkipLink, State } from './common';
 import { chapterLabel, offlineLink } from './downloads';
 import { LocalizedTitle, TitleLocale } from './title-locale';
+import { NavigationDock } from './navigation-dock';
 
 @Component({
   selector: 'app-page-image',
@@ -68,7 +69,7 @@ export class PageImage {
 }
 
 @Component({
-  imports: [RouterLink, LucideDynamicIcon, State, PageImage, SkipLink, LocalizedTitle],
+  imports: [RouterLink, LucideDynamicIcon, State, PageImage, SkipLink, LocalizedTitle, NavigationDock],
   templateUrl: './reader.html',
   host: {'class': 'reader', '(window:scroll)': 'syncPosition()'},
 })

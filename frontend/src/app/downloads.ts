@@ -1,4 +1,4 @@
-import { Component, computed, DestroyRef, effect, ElementRef, inject, Signal, signal, viewChild } from '@angular/core';
+import { Component, computed, DestroyRef, effect, ElementRef, inject, input, Signal, signal, viewChild } from '@angular/core';
 import { rxResource, takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { RouterLink } from '@angular/router';
 import { finalize, Observable } from 'rxjs';
@@ -113,11 +113,19 @@ export class DownloadStore {
 }
 
 @Component({
+  selector: 'app-downloads',
   imports: [RouterLink, State, LocalizedTitle],
   templateUrl: './downloads.html',
 })
 export class DownloadsPage {
+  readonly embedded = input(false);
+  readonly query = input('');
   protected readonly store = new DownloadStore();
+  protected readonly visibleItems = computed(() => {
+    const query = this.query().toLocaleLowerCase();
+    return this.store.items().filter(item => !query ||
+      [item.title.title, item.title.titleRu, item.title.titleEn].some(name => name?.toLocaleLowerCase().includes(query)));
+  });
   protected readonly locale = inject(TitleLocale).language;
   protected readonly state = downloadState;
   protected readonly chapterLabel = chapterLabel;

@@ -1,74 +1,255 @@
-<main id="main-content" class="wrap section-page" tabindex="-1">
-  <div class="intro">
-    <div>
-      <h1 class="page-heading" #heading tabindex="-1">Библиотека</h1>
-      <p>Сохранённые тайтлы и позиции чтения</p>
+<ng-template #sectionLinks>
+  <a class="library-section-link" routerLink="/library" [queryParams]="sectionParams('')" (click)="selectSection($event)"
+    [attr.aria-current]="!activeKey() && !unresolved() ? 'page' : null">
+    <span>Все тайтлы</span><small>{{ allEntries().length }}</small>
+  </a>
+  @for (section of statusNav(); track section.key) {
+    <a class="library-section-link" routerLink="/library" [queryParams]="sectionParams(section.key)"
+      (click)="selectSection($event)" [attr.aria-current]="activeKey() === section.key ? 'page' : null">
+      <span>{{ section.name }}</span><small>{{ section.count }}</small>
+    </a>
+  }
+  <a class="library-section-link" routerLink="/library" [queryParams]="sectionParams('downloads')"
+    (click)="selectSection($event)" [attr.aria-current]="isDownloads() ? 'page' : null">
+    <span>{{ downloadsName() }}</span><small>{{ downloads.items().length }}</small>
+  </a>
+  @for (section of customSections(); track section.id) {
+    <a class="library-section-link" routerLink="/library" [queryParams]="sectionParams(section.id)"
+      (click)="selectSection($event)" [attr.aria-current]="activeKey() === section.id ? 'page' : null">
+      <span>{{ section.name }}</span><small>{{ memberCount(section) }}</small>
+    </a>
+  }
+  @if (sections.error()) {
+    <button class="library-section-link" type="button" (click)="sections.reload()">Повторить загрузку секций</button>
+  } @else if (sections.hasValue()) {
+    <button class="library-section-link library-section-create" type="button" (click)="open({kind: 'create'}, $event)">
+      <svg class="icon" [lucideIcon]="plus" [size]="17" aria-hidden="true"/> Создать секцию
+    </button>
+  }
+</ng-template>
+
+<main id="main-content" class="wrap section-page library-layout" tabindex="-1">
+  <aside class="library-rail">
+    <p class="library-rail-title">Библиотека</p>
+    <nav class="library-section-nav" aria-label="Секции библиотеки">
+      @if (!unresolved()) { <span class="library-indicator" [style.--row]="indicatorRow()" aria-hidden="true"></span> }
+      <ng-container [ngTemplateOutlet]="sectionLinks"/>
+    </nav>
+  </aside>
+
+  <section class="library-content" aria-labelledby="active-section-heading">
+    <div class="library-mobile-bar">
+      <details class="library-disclosure library-mobile-switcher">
+        <summary class="button secondary">
+          <span>Секция · {{ sectionTitle() }}</span>
+          <svg class="icon" [lucideIcon]="chevron" [size]="16" aria-hidden="true"/>
+        </summary>
+        <nav class="library-menu library-mobile-options" aria-label="Секции библиотеки">
+          <ng-container [ngTemplateOutlet]="sectionLinks"/>
+        </nav>
+      </details>
     </div>
-    <a class="button secondary" routerLink="/library/downloads">Скачанное</a>
-  </div>
-  <div aria-live="polite">
-    @if (notice()) {
-      <p class="feedback library-notice"><svg class="icon" [lucideIcon]="check" [size]="18" aria-hidden="true"/> {{ notice() }}</p>
-    }
-  </div>
-  @if (entries.isLoading()) {
-    <app-state kind="loading" artwork message="Загружаем библиотеку…"/>
-  } @else if (entries.error(); as error) {
-    <app-state kind="error" [message]="problem(error).detail" (retry)="entries.reload()"/>
-  } @else if (entries.hasValue()) {
-    <div class="library-list">
-      @for (entry of entries.value(); track entry.id) {
-        @let name = entry.title | localizedTitle:titleLanguage();
-        <article class="surface library-card">
-          <div class="library-summary">
-            <a [routerLink]="titleLink(entry.title)" [attr.aria-label]="'Открыть ' + name">
-              <app-cover [src]="entry.title.coverUrl" [titleKey]="entry.title" label=""/>
-            </a>
-            <div class="library-info">
-              <p class="meta">{{ entry.title.sourceName }}</p>
-              <h2><a [routerLink]="titleLink(entry.title)">{{ name }}</a></h2>
-              <span class="status-tag">{{ statuses[entry.status] }}</span>
-              @if (entry.note) { <p class="library-note">{{ entry.note }}</p> }
-              @if (entry.progress; as progress) {
-                <p class="muted library-position">{{ lang(progress.language) }} · Страница {{ progress.pageIndex + 1 }}</p>
-                <a class="continue" [routerLink]="readerLink(entry.title, progress.chapterId, progress.language)"
-                  [queryParams]="downloads.continueParams(entry.title, progress)">
-                  Продолжить чтение <svg class="icon" [lucideIcon]="arrow" [size]="16" aria-hidden="true"/>
-                </a>
+
+    <header class="library-content-head">
+      <div class="library-heading">
+        <h1 class="page-heading" id="active-section-heading" #heading tabindex="-1">{{ sectionTitle() }}</h1>
+        @if (isDownloads()) {
+          <span class="count" aria-label="Скачанных глав">{{ downloads.items().length }}</span>
+        } @else if (entries.hasValue() && !unresolved()) {
+          <span class="count" [attr.aria-label]="'Тайтлов в секции: ' + visibleEntries().length">{{ visibleEntries().length }}</span>
+        }
+      </div>
+      <div class="actions library-toolbar">
+        @if (custom(); as section) {
+          @if (visibleEntries().length) {
+            <button class="button primary" type="button" aria-haspopup="dialog" (click)="open({kind: 'pick', section}, $event)">
+              <svg class="icon" [lucideIcon]="plus" [size]="17" aria-hidden="true"/> Добавить тайтлы
+            </button>
+          }
+        }
+        @if (currentSection(); as section) {
+          <details class="library-disclosure library-overflow">
+            <summary class="button secondary icon-button" aria-label="Действия секции">
+              <svg class="icon" [lucideIcon]="more" [size]="20" aria-hidden="true"/>
+            </summary>
+            <div class="library-menu">
+              <button type="button" aria-haspopup="dialog" (click)="open({kind: 'rename', section}, $event)">Переименовать</button>
+              @if (!section.systemKey) {
+                <button type="button" class="library-menu-danger" aria-haspopup="dialog"
+                  (click)="open({kind: 'delete-section', section}, $event)">Удалить секцию</button>
               }
             </div>
-            <div class="actions library-actions">
-              <button class="button secondary" type="button" #edit [attr.aria-expanded]="editing() === entry.id"
-                [attr.aria-disabled]="editingBusy()" (click)="toggleEdit(entry.id, edit)">
-                <svg class="icon" [lucideIcon]="pencil" [size]="16" aria-hidden="true"/> Изменить
-              </button>
-              <button class="button secondary" type="button" aria-haspopup="dialog" [attr.aria-disabled]="editingBusy()" (click)="openDelete(entry)">
-                <svg class="icon" [lucideIcon]="trash" [size]="16" aria-hidden="true"/> Удалить
-              </button>
-            </div>
-          </div>
-          @if (editing() === entry.id) {
-            <app-library-editor [entry]="entry" (saving)="editingBusy.set($event)"
-              (saved)="apply($event)" (cancelled)="closeEdit()"/>
-          }
-        </article>
-      } @empty {
-        <app-state kind="empty" message="В библиотеке пока нет тайтлов.">
-          <a class="button primary" routerLink="/catalog">Перейти в каталог <svg class="icon" [lucideIcon]="arrow" [size]="16" aria-hidden="true"/></a>
-        </app-state>
+          </details>
+        }
+      </div>
+    </header>
+    <div class="library-search-row">
+      <app-command-search [value]="searchQuery()" [label]="'Поиск в секции «' + sectionTitle() + '»'" (search)="setSearch($event)"/>
+      @if (searchQuery()) {
+        <p class="muted">Результаты по запросу «{{ searchQuery() }}»</p>
       }
     </div>
-  }
+
+    <div aria-live="polite">
+      @if (notice()) { <p class="feedback library-notice">{{ notice() }}</p> }
+      @if (missingSection()) { <p class="muted library-notice">Секция не найдена. Открыты все тайтлы.</p> }
+    </div>
+
+    @if (isDownloads()) {
+      <app-downloads [embedded]="true" [query]="searchQuery()"/>
+    } @else if (entries.error(); as error) {
+      <app-state kind="error" [message]="problem(error).detail" (retry)="entries.reload()"/>
+    } @else if (unresolved() && sections.error()) {
+      <app-state kind="error" message="Не удалось загрузить секции." (retry)="sections.reload()"/>
+    } @else if (!entries.hasValue() || unresolved()) {
+      <app-state kind="loading" artwork message="Загружаем библиотеку…"/>
+    } @else if (visibleEntries().length) {
+      @for (key of [activeKey()]; track key) {
+        <div class="library-grid">
+          @for (entry of visibleEntries(); track entry.id) {
+            @let name = entry.title | localizedTitle:titleLanguage();
+            <article class="surface library-tile" data-title-card>
+              <a class="library-art" [titlePreview]="entry.title" [routerLink]="titleLink(entry.title)" [attr.aria-label]="'Открыть ' + name">
+                <app-cover [src]="entry.title.coverUrl" [titleKey]="entry.title" label=""/>
+              </a>
+              <div class="library-tile-body">
+                <div class="library-tile-heading">
+                  <h2><a [titlePreview]="entry.title" [routerLink]="titleLink(entry.title)">{{ name }}</a></h2>
+                  <details class="library-disclosure library-overflow">
+                    <summary class="button secondary icon-button" [attr.aria-label]="'Действия · ' + name">
+                      <svg class="icon" [lucideIcon]="more" [size]="18" aria-hidden="true"/>
+                    </summary>
+                    <div class="library-menu">
+                      <button type="button" aria-haspopup="dialog" (click)="open({kind: 'edit', entry}, $event)">Изменить</button>
+                      @if (custom(); as section) {
+                        <button type="button" aria-haspopup="dialog"
+                          (click)="open({kind: 'remove-entry', entry, section}, $event)">Убрать из секции</button>
+                      }
+                      <button type="button" class="library-menu-danger" aria-haspopup="dialog"
+                        (click)="open({kind: 'delete-entry', entry}, $event)">Удалить из библиотеки</button>
+                    </div>
+                  </details>
+                </div>
+                <p class="meta">{{ entry.title.sourceName }}</p>
+                @if (!builtIn()) { <span class="status-tag">{{ statuses[entry.status] }}</span> }
+                @if (entry.note) {
+                  <details class="library-note">
+                    <summary>Заметка</summary>
+                    <p>{{ entry.note }}</p>
+                  </details>
+                }
+                @if (entry.progress; as progress) {
+                  <div class="library-position">
+                    <p class="muted">{{ lang(progress.language) }} · Стр. {{ progress.pageIndex + 1 }}</p>
+                    <a class="continue" [routerLink]="readerLink(entry.title, progress.chapterId, progress.language)"
+                      [queryParams]="downloads.continueParams(entry.title, progress)" [attr.aria-label]="'Продолжить чтение · ' + name">
+                      Продолжить <svg class="icon" [lucideIcon]="arrow" [size]="14" aria-hidden="true"/>
+                    </a>
+                  </div>
+                }
+              </div>
+            </article>
+          }
+        </div>
+      }
+    } @else {
+      <div class="surface library-empty">
+        <svg class="icon" [lucideIcon]="book" [size]="26" aria-hidden="true"/>
+        @if (searchQuery()) {
+          <h2>По вашему запросу ничего не найдено</h2>
+          <p class="muted">Попробуйте другое название или выберите другую секцию.</p>
+          <button class="button secondary" type="button" (click)="setSearch('')">Сбросить поиск</button>
+        } @else if (!allEntries().length) {
+          <h2>Библиотека пока пуста</h2>
+          <p class="muted">Добавьте первый тайтл из каталога.</p>
+          <a class="button primary" routerLink="/catalog">Перейти в каталог</a>
+        } @else if (custom(); as section) {
+          <h2>В этой секции пока пусто</h2>
+          <p class="muted">Выберите тайтлы из своей библиотеки.</p>
+          <button class="button primary" magneticButton [magneticStrength]="5" [magneticDepth]=".4" type="button" aria-haspopup="dialog"
+            (click)="open({kind: 'pick', section}, $event)"><span class="magnetic-content">Добавить тайтлы</span></button>
+        } @else {
+          <h2>Здесь пока нет тайтлов</h2>
+          <p class="muted">Здесь появятся тайтлы со статусом «{{ sectionTitle() }}».</p>
+          <a class="button secondary" routerLink="/library" [queryParams]="sectionParams('')">Открыть все тайтлы</a>
+        }
+      </div>
+    }
+  </section>
 </main>
-<dialog #deleteDialog class="dialog" aria-labelledby="delete-heading" (cancel)="cancelDelete($event)">
-  <h2 id="delete-heading">Удалить из библиотеки?</h2>
-  <p class="muted">Запись «{{ removing()?.title | localizedTitle:titleLanguage() }}» будет удалена вместе с заметкой и позицией чтения.</p>
-  @if (deleteError(); as issue) { <p class="feedback error" role="alert">{{ issue.detail }}</p> }
-  <div class="actions dialog-actions">
-    <button class="button secondary" type="button" autofocus [attr.aria-disabled]="pending()" (click)="closeDelete()">Отмена</button>
-    <button class="button danger" type="button" [attr.aria-disabled]="pending()" (click)="remove()">
-      @if (pending()) { <span class="spinner" aria-hidden="true"></span> Удаляем… }
-      @else { Удалить }
-    </button>
-  </div>
+
+<dialog #libraryDialog class="dialog library-dialog" aria-labelledby="library-dialog-title"
+  (cancel)="cancel($event)" (close)="clearPanel()">
+  @if (panel(); as activePanel) {
+    <h2 id="library-dialog-title">{{ dialogTitle() }}</h2>
+    @if (activePanel.kind === 'create' || activePanel.kind === 'rename') {
+      <form (ngSubmit)="saveName()" [attr.aria-busy]="pending()">
+        <label class="field">
+          <span>Название секции</span>
+          <input name="name" [ngModel]="name()" (ngModelChange)="name.set($event); issue.set(undefined)"
+            maxlength="80" placeholder="Например, На выходные" [disabled]="pending()" autofocus required
+            [attr.aria-invalid]="!!nameError()" aria-describedby="library-section-name-error">
+        </label>
+        <p class="field-error" id="library-section-name-error" aria-live="polite">{{ nameError() }}</p>
+        @if (issue() && !nameError()) { <p class="feedback error" role="alert">{{ issue()?.detail }}</p> }
+        <div class="actions dialog-actions">
+          <button class="button secondary" type="button" [disabled]="pending()" (click)="close()">Отмена</button>
+          <button class="button primary" type="submit" [disabled]="pending() || !name().trim()">
+            {{ pending() ? 'Сохраняем…' : activePanel.kind === 'create' ? 'Создать' : 'Сохранить' }}
+          </button>
+        </div>
+      </form>
+    } @else if (activePanel.kind === 'pick') {
+      <p class="muted">Секция «{{ activePanel.section.name }}»</p>
+      <form (ngSubmit)="addPicked()" [attr.aria-busy]="pending()">
+        @if (pickable().length) {
+          <label class="field library-picker-search">
+            <span class="visually-hidden">Поиск по библиотеке</span>
+            <input name="pickerSearch" type="search" placeholder="Поиск по библиотеке"
+              [ngModel]="pickerSearch()" (ngModelChange)="pickerSearch.set($event)" [disabled]="pending()" autofocus>
+          </label>
+          <ul class="library-picker-list">
+            @for (entry of pickerMatches(); track entry.id) {
+              <li>
+                <label class="library-picker-option">
+                  <input type="checkbox" [checked]="checked().has(entry.id)" [disabled]="pending()"
+                    (change)="setChecked(entry.id, $any($event.target).checked)">
+                  <span><strong>{{ entry.title | localizedTitle:titleLanguage() }}</strong><small class="muted">{{ entry.title.sourceName }}</small></span>
+                </label>
+              </li>
+            } @empty { <li class="muted">По вашему запросу ничего не найдено.</li> }
+          </ul>
+        } @else {
+          <p class="muted library-picker-search">Все тайтлы библиотеки уже в этой секции.</p>
+        }
+        @if (issue(); as error) { <p class="feedback error" role="alert">{{ error.detail }}</p> }
+        <div class="actions dialog-actions">
+          <button class="button secondary" type="button" [disabled]="pending()" (click)="close()">Отмена</button>
+          <button class="button primary" type="submit" [disabled]="pending() || !checked().size">
+            {{ pending() ? 'Добавляем…' : 'Добавить' }} @if (checked().size) { · {{ checked().size }} }
+          </button>
+        </div>
+      </form>
+    } @else if (activePanel.kind === 'edit') {
+      <p class="muted">{{ activePanel.entry.title | localizedTitle:titleLanguage() }}</p>
+      <app-library-editor [entry]="activePanel.entry" (saving)="editingBusy.set($event)" (saved)="apply($event)" (cancelled)="close()"/>
+    } @else {
+      @if (activePanel.kind === 'delete-section') {
+        <p class="muted">Секция «{{ activePanel.section.name }}» исчезнет. Тайтлы из неё останутся в библиотеке.</p>
+      } @else if (activePanel.kind === 'remove-entry') {
+        <p class="muted">«{{ activePanel.entry.title | localizedTitle:titleLanguage() }}» будет убран из секции
+          «{{ activePanel.section.name }}» и останется в библиотеке.</p>
+      } @else if (activePanel.kind === 'delete-entry') {
+        <p class="muted">«{{ activePanel.entry.title | localizedTitle:titleLanguage() }}» будет удалён из всех секций
+          вместе с заметкой и позицией чтения.</p>
+      }
+      @if (issue(); as error) { <p class="feedback error" role="alert">{{ error.detail }}</p> }
+      <div class="actions dialog-actions">
+        <button class="button secondary" type="button" [disabled]="pending()" (click)="close()" autofocus>Отмена</button>
+        <button class="button danger" type="button" [disabled]="pending()" (click)="confirmRemoval()">
+          {{ pending() ? 'Сохраняем…' : activePanel.kind === 'remove-entry' ? 'Убрать' : 'Удалить' }}
+        </button>
+      </div>
+    }
+  }
 </dialog>

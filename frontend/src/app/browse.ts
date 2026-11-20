@@ -7,11 +7,13 @@ import {
 import { finalize, map, Observable, tap } from 'rxjs';
 import { Api, Extension, problem, Source, SourceIdentity } from './api';
 import { State } from './common';
+import { MagneticButton } from './magnetic-button';
+import { CommandSearch } from './shared/command-search';
 
 type BrowseTab = 'sources' | 'extensions';
 
 @Component({
-  imports: [RouterLink, LucideDynamicIcon, State],
+  imports: [RouterLink, LucideDynamicIcon, State, MagneticButton, CommandSearch],
   templateUrl: './browse.html',
   styleUrl: './browse.css',
 })
@@ -23,9 +25,13 @@ export class Browse {
   private readonly injector = inject(Injector);
   private readonly revision = signal(0);
   readonly tab = input<string>();
+  readonly q = input<string>();
+  protected readonly searchQuery = computed(() => (this.q() ?? '').trim().slice(0, 120));
   protected readonly activeTab = computed<BrowseTab>(() => this.tab() === 'extensions' ? 'extensions' : 'sources');
   protected readonly sources = signal<Source[] | undefined>(undefined);
   protected readonly extensions = signal<Extension[] | undefined>(undefined);
+  protected readonly filteredSources = computed(() => this.sources()?.filter(item => this.matches(item)) ?? []);
+  protected readonly filteredExtensions = computed(() => this.extensions()?.filter(item => this.matches(item)) ?? []);
   protected readonly sourcesRequest = rxResource({
     params: this.revision,
     stream: () => this.api.sources().pipe(tap(items => this.sources.set(items))),
@@ -44,6 +50,17 @@ export class Browse {
   protected readonly plug = LucidePlug;
   protected readonly plus = LucidePlus;
   protected readonly problem = problem;
+
+  private matches(item: SourceIdentity) {
+    const query = this.searchQuery().toLocaleLowerCase();
+    return [item.sourceName, item.sourceId].some(value => value.toLocaleLowerCase().includes(query));
+  }
+
+  protected setSearch(query: string) {
+    void this.router.navigate([], {
+      relativeTo: this.route, queryParams: {q: query.trim() || null}, queryParamsHandling: 'merge',
+    });
+  }
 
   protected selectTab(tab: BrowseTab) {
     void this.router.navigate([], {

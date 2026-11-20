@@ -161,6 +161,78 @@ class SourceConnectionsTest {
     }
 
     @Test
+    void librarySectionsKeepMembershipIndependentOfReadingState() {
+        String sections = "/library/sections";
+        JsonNode entry = json(request("POST", "/library", """
+                {"sourceId":"peppercarrot","externalTitleId":"pepper-and-carrot","status":"READING","note":"Закладка"}
+                """), 201);
+        String entryId = entry.path("id").stringValue();
+        String entryPath = "/library/" + entryId;
+        jdbc.sql("""
+                UPDATE library_entries SET progress_chapter_id = 'ep01_Potion-of-Flight',
+                    progress_language = 'ru', progress_page_index = 0 WHERE id = :id
+                """).param("id", UUID.fromString(entryId)).update();
+
+        String weekend = sections + "/" + json(request("POST", sections, """
+                {"name":" На выходные "}
+                """), 201).path("id").asString();
+        String later = sections + "/" + json(request("POST", sections, """
+                {"name":"На каникулы"}
+                """), 201).path("id").asString();
+        String membership = "{\"entryIds\":[\"" + entryId + "\"]}";
+        try {
+            json(request("POST", sections, "{\"name\":\"НА ВЫХОДНЫЕ\"}"), 409);
+            json(request("POST", sections, "{\"name\":\"Читаю\"}"), 409);
+            json(request("POST", weekend + "/entries",
+                    "{\"entryIds\":[\"" + entryId + "\",\"" + UUID.randomUUID() + "\"]}"), 404);
+            assertThat(get(weekend).path("entryIds")).isEmpty();
+
+            for (String path : List.of(weekend, weekend, later)) {
+                assertThat(json(request("POST", path + "/entries", membership), 200).path("entryIds"))
+                        .extracting(JsonNode::asString).containsExactly(entryId);
+            }
+            JsonNode updated = json(request("PATCH", entryPath, "{\"status\":\"COMPLETED\"}"), 200);
+            assertThat(updated.path("status").asString()).isEqualTo("COMPLETED");
+            assertThat(updated.path("note").asString()).isEqualTo("Закладка");
+            assertThat(updated.path("progress").path("pageIndex").asInt()).isZero();
+            JsonNode persisted = get(entryPath);
+
+            JsonNode renamed = json(request("PATCH", weekend, "{\"name\":\"На субботу\"}"), 200);
+            assertThat(renamed.path("name").asString()).isEqualTo("На субботу");
+            assertThat(renamed.path("entryIds")).extracting(JsonNode::asString).containsExactly(entryId);
+            assertThat(json(request("DELETE", later + "/entries/" + entryId, null), 200).path("entryIds")).isEmpty();
+            assertThat(request("DELETE", weekend, null).statusCode()).isEqualTo(204);
+            assertThat(get(entryPath)).isEqualTo(persisted);
+
+            json(request("POST", later + "/entries", membership), 200);
+            assertThat(request("DELETE", entryPath, null).statusCode()).isEqualTo(204);
+            assertThat(get(later).path("entryIds")).isEmpty();
+        } finally {
+            request("DELETE", weekend, null);
+            request("DELETE", later, null);
+            request("DELETE", entryPath, null);
+        }
+    }
+
+    @Test
+    void systemSectionNamesCanChangeWithoutChangingTheirIdentity() {
+        String path = "/library/sections/b7311428-7138-4c13-9ace-000000000002";
+        JsonNode before = get(path);
+        try {
+            JsonNode renamed = json(request("PATCH", path, "{\"name\":\"Сейчас читаю\"}"), 200);
+            assertThat(renamed.path("systemKey").asString()).isEqualTo("reading");
+            assertThat(renamed.path("id")).isEqualTo(before.path("id"));
+            assertThat(get(path).path("name").asString()).isEqualTo("Сейчас читаю");
+            json(request("PATCH", path, "{\"name\":\"Все тайтлы\"}"), 400);
+            json(request("PATCH", path, "{\"name\":\"Скачанное\"}"), 409);
+            json(request("DELETE", path, null), 422);
+            json(request("POST", path + "/entries", "{\"entryIds\":[\"" + UUID.randomUUID() + "\"]}"), 422);
+        } finally {
+            json(request("PATCH", path, "{\"name\":\"Читаю\"}"), 200);
+        }
+    }
+
+    @Test
     void catalogPersistsBothTitlesWithoutAddingLibraryEntries() {
         String endpoint = "/catalog?sourceId=peppercarrot&q=pepper";
         JsonNode library = get("/library");

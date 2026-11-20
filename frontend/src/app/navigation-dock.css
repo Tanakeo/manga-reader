@@ -1,0 +1,58 @@
+:host {
+  display: block;
+  inline-size: max-content;
+}
+
+.dock {
+  isolation: isolate;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  background: var(--panel);
+}
+
+.track, .ink {
+  display: grid;
+  grid-template-columns: repeat(3, 56px);
+}
+
+.track {
+  position: relative;
+  --indicator-start: 0%;
+  --indicator-end: 66.6667%;
+  --indicator-inset: 0%;
+}
+
+.indicator {
+  position: absolute;
+  inset: var(--indicator-inset) var(--indicator-end) var(--indicator-inset) var(--indicator-start);
+  border-radius: 99px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+a, .ink span {
+  display: grid;
+  min-block-size: 48px;
+  place-items: center;
+}
+
+a {
+  z-index: 1;
+  color: var(--muted);
+  border-radius: 99px;
+}
+
+a:hover { color: var(--text); }
+a:focus-visible { z-index: 3; outline: 2px solid var(--text); outline-offset: 1px; }
+
+.ink {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  color: var(--ink);
+  clip-path: inset(var(--indicator-inset) var(--indicator-end) var(--indicator-inset) var(--indicator-start) round 99px);
+}
+
+.ink[hidden] { display: none; }

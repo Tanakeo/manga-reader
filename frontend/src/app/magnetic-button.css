@@ -1,0 +1,34 @@
+.button.magnetic-button[data-magnetic="true"] {
+  position: relative;
+  isolation: isolate;
+  background: transparent;
+  border-color: transparent;
+}
+
+.button.magnetic-button[data-magnetic="true"]:hover { background: transparent; }
+
+.button.magnetic-button[data-magnetic="true"]::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  z-index: -1;
+  background: var(--accent);
+  border: 1px solid transparent;
+  border-radius: inherit;
+  transform: translate(var(--mag-x, 0px), var(--mag-y, 0px)) scale(var(--mag-scale, 1));
+}
+
+.button.magnetic-button[data-magnetic="true"]:hover::before { background: var(--accent-hover); }
+.magnetic-content { display: inline-flex; justify-content: center; align-items: center; gap: 8px; }
+.magnetic-button[data-magnetic="true"] .magnetic-content {
+  pointer-events: none;
+  transform: translate(
+    calc(var(--mag-x, 0px) + var(--mag-label-x, 0px)),
+    calc(var(--mag-y, 0px) + var(--mag-label-y, 0px))
+  ) scale(var(--mag-scale, 1));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button.magnetic-button[data-magnetic="true"]::before,
+  .magnetic-button[data-magnetic="true"] .magnetic-content { transform: none; }
+}

@@ -11,6 +11,11 @@
   margin-bottom: 20px;
 }
 
+.intro { flex-wrap: wrap; }
+@media (max-width: 720px) {
+  .intro app-command-search { margin-top: 18px; }
+}
+
 .browse-tabs::before {
   content: '';
   position: absolute;

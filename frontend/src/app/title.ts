@@ -1,17 +1,20 @@
 import { Component, computed, DestroyRef, ElementRef, inject, input, signal, viewChild } from '@angular/core';
 import { rxResource, takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import { FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
-import { ActivatedRoute, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { LucideArrowLeft as ArrowLeft, LucideArrowRight as ArrowRight, LucideArrowUpRight as ArrowUpRight, LucideBookOpen as BookOpen, LucideCheck as Check, LucideChevronRight as ChevronRight, LucideDynamicIcon, LucidePlus as Plus } from '@lucide/angular';
 import { finalize } from 'rxjs';
 import {
-  Api, Chapter, fieldError, languageName, LibraryEntry, Problem, problem, readerLink,
+  Api, Chapter, fieldError, languageName, LibraryEntry, libraryStatusParams, Problem, problem, readerLink,
   ReadingStatus, sameTitle, statusOptions, statuses, TitleKey,
 } from './api';
 import { catalogParams, readCatalog, tagName } from './catalog-query';
 import { Cover, State } from './common';
 import { chapterLabel, downloadState, DownloadStore, offlineLink } from './downloads';
 import { LocalizedTitle, TitleLocale } from './title-locale';
+import { MagneticButton } from './magnetic-button';
+import { TitleDetails } from './shared/title-details';
+import { TitlePreviewState } from './shared/title-preview-state';
 
 @Component({
   selector: 'app-add-entry',
@@ -40,7 +43,10 @@ import { LocalizedTitle, TitleLocale } from './title-locale';
         @else { <svg class="icon" [lucideIcon]="plus" [size]="18" aria-hidden="true"/> Добавить в библиотеку }
       </button>
       <div aria-live="polite">
-        @if (saved()) { <p class="feedback">Тайтл добавлен. <a routerLink="/library">Открыть библиотеку</a></p> }
+        @if (saved(); as entry) {
+          <p class="feedback">Тайтл добавлен. <a routerLink="/library"
+            [queryParams]="libraryStatusParams(entry.status)">Открыть библиотеку</a></p>
+        }
       </div>
       @if (issue(); as issue) {
         <p class="feedback error" role="alert">{{ issue.detail }}
@@ -60,6 +66,7 @@ export class AddEntry {
   protected readonly options = statusOptions;
   protected readonly check = Check;
   protected readonly plus = Plus;
+  protected readonly libraryStatusParams = libraryStatusParams;
   protected readonly form = new FormGroup({
     status: new FormControl<ReadingStatus>('PLANNED', {nonNullable: true, validators: Validators.required}),
     note: new FormControl('', {nonNullable: true, validators: Validators.maxLength(2000)}),
@@ -95,11 +102,15 @@ export class AddEntry {
 }
 
 @Component({
-  imports: [RouterLink, LucideDynamicIcon, Cover, State, AddEntry, LocalizedTitle],
+  imports: [RouterLink, LucideDynamicIcon, Cover, State, AddEntry, LocalizedTitle, MagneticButton],
   templateUrl: './title.html',
 })
 export class TitlePage {
+  private readonly details = inject(TitleDetails);
+  private readonly preview = inject(TitlePreviewState);
+  private readonly router = inject(Router);
   protected readonly titleLanguage = inject(TitleLocale).language;
+  protected readonly libraryStatusParams = libraryStatusParams;
   private readonly api = inject(Api);
   readonly sourceId = input.required<string>();
   readonly externalTitleId = input.required<string>();
@@ -115,7 +126,19 @@ export class TitlePage {
   protected readonly downloadState = downloadState;
   protected readonly chapterLabel = chapterLabel;
   protected readonly tagName = tagName;
-  protected readonly title = rxResource({params: this.key, stream: ({params}) => this.api.title(params)});
+  protected readonly title = rxResource({params: this.key, stream: ({params}) => this.details.load(params)});
+  protected readonly displayTitle = computed(() => {
+    if (this.title.hasValue()) return this.title.value();
+    const summary = this.details.summary(this.key());
+    return summary ? {...summary, description: null, sourceUrl: '', license: null, tags: []} : undefined;
+  });
+  protected readonly arriving = computed(() => {
+    const selected = this.preview.selection();
+    return this.preview.openingPage() && !!selected && sameTitle(selected.key, this.key());
+  });
+  protected readonly backHref = computed(() => this.preview.pageReturn()?.url ??
+    this.router.serializeUrl(this.router.createUrlTree(['/catalog'], {queryParams: this.backParams()})));
+  protected readonly backLabel = computed(() => this.preview.pageReturn()?.url.startsWith('/library') ? 'Библиотека' : 'Каталог');
   protected readonly chapters = rxResource({params: this.key, stream: ({params}) => this.api.chapters(params)});
   protected readonly library = rxResource({stream: () => this.api.library()});
   protected readonly entry = computed(() => this.library.hasValue()
@@ -140,6 +163,15 @@ export class TitlePage {
 
   protected defaultLanguage(languages: string[]) {
     return languages.includes('ru') ? 'ru' : languages[0];
+  }
+
+  protected goBack(event: MouseEvent) {
+    if (event.button || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    if (this.preview.pageReturn()) this.preview.backToList(event);
+    else {
+      event.preventDefault();
+      void this.router.navigateByUrl(this.backHref());
+    }
   }
 
   protected chooseDownload(chapter: Chapter) {

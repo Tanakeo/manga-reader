@@ -1,8 +1,11 @@
-<main id="main-content" class="wrap section-page" tabindex="-1">
+<section [attr.id]="embedded() ? null : 'main-content'" [attr.role]="embedded() ? null : 'main'"
+  [class.wrap]="!embedded()" [class.section-page]="!embedded()" tabindex="-1">
+  @if (!embedded()) {
   <a class="back-link" routerLink="/library">В библиотеку</a>
+  }
   <div class="intro">
     <div>
-      <h1 class="page-heading" #heading tabindex="-1">Скачанное</h1>
+      <h2 class="page-heading" [class.visually-hidden]="embedded()" #heading tabindex="-1">Скачанное</h2>
       <p>Главы для чтения без интернета</p>
     </div>
   </div>
@@ -13,7 +16,7 @@
     <app-state kind="error" [message]="problem(error).detail" (retry)="store.data.reload()"/>
   } @else if (store.data.hasValue()) {
     <ul class="download-list">
-      @for (item of store.items(); track item.id) {
+      @for (item of visibleItems(); track item.id) {
         <li class="surface download-card">
           <div>
             <p class="meta">{{ item.title | localizedTitle:locale() }} · {{ lang(item.language) }}</p>
@@ -41,15 +44,19 @@
           </div>
         </li>
       } @empty {
+        @if (query()) {
+          <li><app-state kind="empty" message="Скачанных глав с таким названием тайтла не найдено."/></li>
+        } @else {
         <li><app-state kind="empty" message="Скачанных глав пока нет. Скачать перевод можно на карточке Pepper&amp;Carrot.">
           <a class="button primary" routerLink="/catalog/peppercarrot/pepper-and-carrot">Открыть Pepper&amp;Carrot</a>
         </app-state></li>
+        }
       }
     </ul>
   } @else {
     <app-state kind="loading" artwork message="Загружаем список глав…"/>
   }
-</main>
+</section>
 <dialog #deleteDialog class="dialog" aria-labelledby="delete-download-heading"
   (cancel)="cancel($event)" (close)="confirming.set(undefined)">
   @if (confirming(); as item) {

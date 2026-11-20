@@ -7,6 +7,7 @@ import io.github.mangareader.library.LibraryModels.CreateEntry;
 import io.github.mangareader.library.LibraryModels.Progress;
 import io.github.mangareader.library.LibraryModels.UpdateEntry;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -43,6 +44,14 @@ final class LibraryRequests {
     }
 
     static UUID entryId(String value) {
+        return uuid(value, "entryId");
+    }
+
+    static UUID sectionId(String value) {
+        return uuid(value, "sectionId");
+    }
+
+    private static UUID uuid(String value, String field) {
         try {
             UUID id = UUID.fromString(value);
             if (id.toString().equalsIgnoreCase(value)) {
@@ -51,7 +60,32 @@ final class LibraryRequests {
         } catch (IllegalArgumentException ignored) {
             // All invalid representations receive the same field error.
         }
-        throw ApiException.validation(List.of(new FieldError("entryId", "INVALID_FORMAT", "Укажите UUID записи.")));
+        throw ApiException.validation(List.of(new FieldError(field, "INVALID_FORMAT", "Укажите корректный UUID.")));
+    }
+
+    static String sectionName(JsonNode body) {
+        requireObject(body);
+        var errors = new ArrayList<FieldError>();
+        checkFields(body, Set.of("name"), "", errors);
+        String name = requiredText(body.get("name"), "name", errors);
+        throwIfInvalid(errors);
+        return name;
+    }
+
+    static List<UUID> sectionEntries(JsonNode body) {
+        requireObject(body);
+        var errors = new ArrayList<FieldError>();
+        checkFields(body, Set.of("entryIds"), "", errors);
+        var entries = body.path("entryIds");
+        if (!entries.isArray() || entries.isEmpty()) {
+            errors.add(new FieldError("entryIds", "INVALID_VALUE", "Выберите хотя бы один тайтл."));
+        }
+        throwIfInvalid(errors);
+        var ids = new LinkedHashSet<UUID>();
+        for (var entry : entries) {
+            ids.add(uuid(entry.isString() ? entry.stringValue() : "", "entryIds"));
+        }
+        return List.copyOf(ids);
     }
 
     private static void requireObject(JsonNode body) {

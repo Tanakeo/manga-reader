@@ -1,11 +1,11 @@
 import { Component, inject } from '@angular/core';
-import { RouterLink, RouterLinkActive, RouterOutlet, Routes } from '@angular/router';
+import { Router, RouterLink, RouterOutlet, Routes } from '@angular/router';
 import { Browse } from './browse';
-import { Catalog } from './catalog';
 import { SkipLink } from './common';
-import { DownloadsPage } from './downloads';
-import { Library } from './library';
+import { NavigationDock } from './navigation-dock';
 import { TitleLocale } from './title-locale';
+import { TitlePreview } from './shared/title-preview';
+import { TitlePreviewState } from './shared/title-preview-state';
 
 @Component({
   selector: 'app-root',
@@ -15,7 +15,8 @@ import { TitleLocale } from './title-locale';
 export class App {}
 
 @Component({
-  imports: [RouterLink, RouterLinkActive, RouterOutlet, SkipLink],
+  imports: [RouterLink, RouterOutlet, SkipLink, NavigationDock, TitlePreview],
+  host: {'class': 'site-layout'},
   template: `
     <app-skip-link/>
     <header class="site-header">
@@ -23,11 +24,7 @@ export class App {}
         <a class="brand" routerLink="/catalog" aria-label="Кадр — каталог">
           <img src="kadr.svg" alt="" width="32" height="32"> <span>Кадр<span class="accent">.</span></span>
         </a>
-        <nav class="pills" aria-label="Разделы">
-          <a routerLink="/catalog" routerLinkActive="selected" ariaCurrentWhenActive="page">Каталог</a>
-          <a routerLink="/library" routerLinkActive="selected" ariaCurrentWhenActive="page">Библиотека</a>
-          <a routerLink="/browse" routerLinkActive="selected" ariaCurrentWhenActive="page">Обзор</a>
-        </nav>
+        <app-navigation-dock class="site-dock"/>
         <div class="title-language" role="group" aria-label="Язык названий тайтлов">
           <button type="button" lang="ru" aria-label="Русские названия" [attr.aria-pressed]="locale.language() === 'ru'"
             (click)="locale.select('ru')">RU</button>
@@ -37,9 +34,13 @@ export class App {}
       </div>
     </header>
     <router-outlet/>
+    @defer (when preview.selection()) { <app-title-preview/> }
   `,
 })
-class Layout { protected readonly locale = inject(TitleLocale); }
+class Layout {
+  protected readonly locale = inject(TitleLocale);
+  protected readonly preview = inject(TitlePreviewState);
+}
 
 @Component({
   imports: [RouterLink],
@@ -60,11 +61,12 @@ export const routes: Routes = [
   {
     path: '', component: Layout, children: [
       {path: '', redirectTo: 'catalog', pathMatch: 'full'},
-      {path: 'catalog', component: Catalog, title: 'Каталог — Кадр'},
+      {path: 'catalog', loadComponent: () => import('./catalog').then(module => module.Catalog), title: 'Каталог — Кадр'},
       {path: 'catalog/:sourceId/:externalTitleId',
         loadComponent: () => import('./title').then(module => module.TitlePage), title: 'Тайтл — Кадр'},
-      {path: 'library/downloads', component: DownloadsPage, title: 'Скачанное — Кадр'},
-      {path: 'library', component: Library, title: 'Библиотека — Кадр'},
+      {path: 'library/downloads', pathMatch: 'full',
+        redirectTo: () => inject(Router).createUrlTree(['/library'], {queryParams: {section: 'downloads'}})},
+      {path: 'library', loadComponent: () => import('./library').then(module => module.Library), title: 'Библиотека — Кадр'},
       {path: 'browse', component: Browse, title: 'Обзор — Кадр'},
       {path: '**', component: NotFound, title: 'Страница не найдена — Кадр'},
     ],
