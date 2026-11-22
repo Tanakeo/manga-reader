@@ -25,6 +25,10 @@ public final class ApiException extends RuntimeException {
         return new ApiException(status, code, detail, List.of(), Map.of(), null);
     }
 
+    public static ApiException withDetails(HttpStatus status, String code, String detail, Map<String, ?> details) {
+        return new ApiException(status, code, detail, List.of(), details, null);
+    }
+
     public static ApiException invalidTags(List<String> ids) {
         return new ApiException(HttpStatus.UNPROCESSABLE_CONTENT, "UNKNOWN_TAG", "Некоторые теги не найдены.",
                 List.of(new FieldError("tagId", "UNKNOWN_TAG", "Удалите неизвестные теги.")),

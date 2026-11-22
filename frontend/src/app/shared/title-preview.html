@@ -22,7 +22,7 @@
         <div class="preview-scroll">
           @if (item(); as title) {
             @if (title.author) { <p class="muted">{{ title.author }}</p> }
-            <app-catalog-facts [item]="title"/>
+            <app-catalog-facts [item]="title" [availability]="availability()" [language]="chapterLanguage()"/>
           }
           <div class="preview-description" aria-live="polite">
             @if (detail.isLoading()) {

@@ -11,6 +11,8 @@ import io.github.mangareader.error.ApiException;
 import io.github.mangareader.error.ApiInputs;
 import io.github.mangareader.source.MangaSource;
 import io.github.mangareader.source.PublicSourceClient;
+import io.github.mangareader.source.SourceScan.CatalogPage;
+import io.github.mangareader.source.SourceScan.ChapterResult;
 import io.github.mangareader.source.SourceModels.Attribution;
 import io.github.mangareader.source.SourceModels.ChapterPages;
 import io.github.mangareader.source.SourceModels.Page;
@@ -36,7 +38,7 @@ public class MangaLibSource implements MangaSource {
     private static final String API = "https://api2.mangalib.me";
     private static final String SITE_ID = "1";
     private static final String TITLE_PREFIX = "/ru/manga/";
-    private static final String[] IMAGE_DOMAINS = {"mangalib.me", "mixlib.me", "cdnlibs.org", "lib.social", "mangalib.org"};
+    private static final String[] IMAGE_DOMAINS = {"mangalib.me", "mixlib.me", "cdnlibs.org", "lib.social", "mangalib.org", "cdnrulib.link", "imglib.info"};
     private static final List<String> LANGUAGES = List.of("ru");
 
     private final PublicSourceClient client;
@@ -50,6 +52,8 @@ public class MangaLibSource implements MangaSource {
             Caffeine.newBuilder().maximumSize(128).expireAfterWrite(Duration.ofMinutes(5)).build();
     private final Cache<String, URI> imageServer =
             Caffeine.newBuilder().maximumSize(1).expireAfterWrite(Duration.ofMinutes(30)).build();
+    private final Cache<String, List<URI>> imageServers =
+            Caffeine.newBuilder().maximumSize(1).expireAfterWrite(Duration.ofMinutes(10)).build();
 
     public MangaLibSource(PublicSourceClient client) {
         this.client = client;
@@ -58,6 +62,46 @@ public class MangaLibSource implements MangaSource {
     @Override public String id() { return "mangalib"; }
     @Override public String displayName() { return "MangaLib"; }
     @Override public String websiteUrl() { return ORIGIN; }
+    @Override public List<String> supportedLanguages() { return LANGUAGES; }
+    @Override public List<String> imageDomains() { return List.of(IMAGE_DOMAINS); }
+
+    @Override
+    public void refreshManifest(String chapterId) {
+        imageServer.invalidateAll();
+        imageServers.invalidateAll();
+    }
+
+    @Override
+    public List<URI> alternativeImages(URI original) {
+        return servers().stream().map(server -> server.resolve(original.getRawPath()))
+                .filter(candidate -> !candidate.equals(original)).distinct().limit(2).toList();
+    }
+
+    @Override
+    public CatalogPage catalogPage(String cursor) {
+        String[] parts = cursor == null ? new String[]{"1", ""} : cursor.split("\\|", -1);
+        int page = Integer.parseInt(parts[0]);
+        var uri = url(API, "api", "manga").queryParam("site_id[]", 1).queryParam("page", page);
+        if (!parts[1].isBlank()) uri.queryParam("seed", parts[1]);
+        var response = client.json(uri.build().encode().toUri(), SITE_ID, null);
+        var meta = response.path("meta");
+        if (!meta.path("has_next_page").isBoolean() || meta.path("current_page").asInt(-1) != page) {
+            throw badResponse("Missing MangaLib catalog pagination");
+        }
+        var items = array(response.path("data")).stream().map(this::searchResult).toList();
+        boolean next = meta.path("has_next_page").asBoolean();
+        if (next && items.isEmpty()) throw badResponse("Empty nonterminal MangaLib page");
+        String seed = parts[1].isBlank() ? meta.path("seed").asText("") : parts[1];
+        return new CatalogPage(items, next ? (page + 1) + "|" + seed : null, null,
+                next ? null : "EXHAUSTED", "page=" + page + ", next=" + next + ", seed=" + seed);
+    }
+
+    @Override
+    public ChapterResult scanChapters(String id) {
+        chapters.invalidate(id);
+        var items = listChapters(id);
+        return new ChapterResult(items, true, items.size(), 0, "EXHAUSTED");
+    }
 
     @Override
     public List<SourceTitle> searchTitles(String query) {
@@ -136,24 +180,36 @@ public class MangaLibSource implements MangaSource {
             String id = text(item.path("id"));
             String volume = text(item.path("volume"));
             String number = text(item.path("number"));
-            if (id == null || !id.matches("\\d+") || volume == null || !volume.matches("\\d+(?:\\.\\d+)?")
-                    || number == null || !number.matches("\\d+(?:\\.\\d+)?")) continue;
-            var branch = array(item.path("branches")).stream()
+            if (id == null || !id.matches("\\d+") || volume == null || number == null) {
+                throw badResponse("Invalid MangaLib chapter identity");
+            }
+            var branches = array(item.path("branches")).stream()
                     .filter(candidate -> candidate.path("restricted_view").isNull()
                             || candidate.path("restricted_view").isMissingNode()
                             || candidate.path("restricted_view").path("is_open").asBoolean(false))
-                    .findFirst().orElse(null);
-            if (branch == null) continue;
+                    .toList();
+            for (var branch : branches) {
             String branchId = text(branch.path("branch_id"));
-            if (branchId != null && !branchId.matches("\\d+")) continue;
+            if (branchId != null && !branchId.matches("\\d+")) throw badResponse("Invalid translation branch");
             String label = "Том " + volume + ", глава " + number;
             String name = text(item.path("name"));
-            var summary = new SourceChapter(id, new BigDecimal(number), name == null ? label : label + " · " + name,
-                    LANGUAGES, 0);
+            String published = text(branch.path("created_at"));
+            var summary = new SourceChapter(branchId == null ? id : id + "~" + branchId,
+                    number.matches("\\d+(?:\\.\\d+)?") ? new BigDecimal(number) : null,
+                    name == null ? label : label + " · " + name, LANGUAGES, null, id,
+                    text(branch.path("teams").path(0).path("name")),
+                    PublicSourceClient.instant(published),volume,number);
             result.add(new Chapter(summary, volume, number, branchId, text(branch.path("teams").path(0).path("name"))));
+            }
         }
-        return result.stream().sorted(Comparator.comparing((Chapter chapter) -> new BigDecimal(chapter.volume()))
-                .thenComparing(chapter -> chapter.summary().number())).toList();
+        return result.stream().sorted(Comparator.comparing((Chapter chapter) -> numericVolume(chapter.volume()),
+                        Comparator.nullsLast(Comparator.naturalOrder())).thenComparing(Chapter::volume)
+                .thenComparing(chapter -> chapter.summary().number(), Comparator.nullsLast(Comparator.naturalOrder()))).toList();
+    }
+
+    private static BigDecimal numericVolume(String value) {
+        try { return new BigDecimal(value); }
+        catch (NumberFormatException exception) { return null; }
     }
 
     @Override
@@ -162,7 +218,11 @@ public class MangaLibSource implements MangaSource {
         var available = chapters.get(id, this::loadChapters);
         for (int index = 0; index < available.size(); index++) {
             Chapter chapter = available.get(index);
-            if (chapterId.equals(chapter.summary().id())) return readChapter(id, available, index, chapter);
+            if (chapterId.equals(chapter.summary().id()) || chapterId.equals(chapter.summary().logicalChapterId())) {
+                var result = readChapter(id, available, index, chapter);
+                return new ChapterPages(chapterId, result.title(), result.language(), result.pageCount(),
+                        result.previousChapterId(), result.nextChapterId(), result.attribution(), result.pages());
+            }
         }
         throw chapterMissing();
     }
@@ -201,15 +261,20 @@ public class MangaLibSource implements MangaSource {
     }
 
     private URI loadImageServer(String siteId) {
-        URI uri = url(API, "api", "constants").queryParam("fields[]", "imageServers").build().encode().toUri();
-        for (JsonNode server : array(data(uri, null).path("imageServers"))) {
-            if (!"secondary".equals(text(server.path("id")))) continue;
-            for (JsonNode site : server.path("site_ids")) {
-                URI candidate = httpsUrl(text(server.path("url")), IMAGE_DOMAINS);
-                if (siteId.equals(site.asText()) && candidate != null) return candidate;
-            }
-        }
-        throw badResponse("No image server for MangaLib");
+        return servers().stream().findFirst().orElseThrow(() -> badResponse("No image server for MangaLib"));
+    }
+
+    private List<URI> servers() {
+        return imageServers.get(SITE_ID, ignored -> {
+            URI uri = url(API, "api", "constants").queryParam("fields[]", "imageServers").build().encode().toUri();
+            var servers = array(data(uri, null).path("imageServers"));
+            return servers.stream().filter(server -> List.of("secondary", "compress", "main", "download")
+                            .contains(server.path("id").asText()))
+                    .filter(server -> array(server.path("site_ids")).stream().anyMatch(site -> SITE_ID.equals(site.asText())))
+                    .sorted(Comparator.comparing(server -> !"secondary".equals(server.path("id").asText())))
+                    .map(server -> httpsUrl(text(server.path("url")), IMAGE_DOMAINS))
+                    .filter(java.util.Objects::nonNull).distinct().toList();
+        });
     }
 
     private JsonNode data(URI uri, Supplier<ApiException> missing) {

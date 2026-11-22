@@ -1,6 +1,6 @@
 import { HttpClient, HttpErrorResponse, HttpParams } from '@angular/common/http';
-import { inject, Injectable } from '@angular/core';
-import { map } from 'rxjs';
+import { inject, Injectable, signal } from '@angular/core';
+import { catchError, defer, EMPTY, expand, from, map, mergeMap, Observable, retry, Subject, switchMap, takeUntil, tap, throwError, timer } from 'rxjs';
 
 export interface TitleKey {
   sourceId: string;
@@ -31,6 +31,8 @@ export interface TitleSummary extends TitleKey {
   titleEn: string | null;
   publicationStatus: 'ongoing' | 'completed' | 'hiatus' | 'cancelled' | null;
   releaseYear: number | null;
+  chapterAvailability?: ChapterAvailability;
+  latestChapterAt?: string | null;
 }
 
 interface License {
@@ -39,6 +41,7 @@ interface License {
 }
 
 export interface TitleDetail extends TitleSummary {
+  metadataError?: {code: string; detail: string; stage: string};
   description: string | null;
   sourceUrl: string;
   license: License | null;
@@ -56,6 +59,47 @@ export interface CatalogQuery {
   q: string;
   tagIds: string[];
   sort: string;
+  chapterLanguages?: string[];
+}
+
+export interface ChapterAvailability {
+  state: 'UNVERIFIED' | 'CHECKING' | 'PARTIAL' | 'COMPLETE' | 'ERROR';
+  presence: 'UNKNOWN' | 'FOUND' | 'NONE';
+  languages: string[];
+  chapterCount: number | null;
+  editionCount: number | null;
+  knownChapterCount: number;
+  checkedAt?: string | null;
+  lastSuccessAt?: string | null;
+  nextCheckAt?: string | null;
+  error: SourceError | null;
+}
+export interface SourceError {
+  code: string; detail: string; stage?: string; retryable?: boolean; retryAfterSeconds?: number | null;
+}
+export interface CatalogResponse {
+  items: TitleSummary[];
+  page: {total: number; hasMore: boolean; nextCursor: string | null; snapshotId: string;
+    limit?: number; capturedAt?: string; expiresAt?: string};
+  partial: boolean;
+  sourceStates: {sourceId: string; metadataState: string; collectedTitleCount: number;
+    verifiedTitleCount: number; hiddenTitleCount: number; availableTitleCount?: number;
+    sourceTotal?: number | null; stopReason?: string | null; error: SourceError | null}[];
+}
+interface ChapterResponse {
+  items: Chapter[];
+  availability: ChapterAvailability;
+  page: {hasMore: boolean; nextCursor: string | null};
+}
+export interface SyncRun {
+  runId: string; state: string; phase: string; uniqueTitlesSeen: number; chaptersCheckedTitles: number;
+  pagesCommitted: number; sourceTotal?: number | null; nextRetryAt?: string | null;
+  stopReason: string | null; error: SourceError | null;
+}
+export interface SyncStatus {
+  current: SyncRun | null;
+  lastFinished: SyncRun | null;
+  coverage: CatalogResponse['sourceStates'][number];
 }
 
 export interface Chapter {
@@ -63,10 +107,15 @@ export interface Chapter {
   number: number | null;
   title: string;
   languages: string[];
-  pageCount: number;
+  pageCount: number | null;
+  logicalChapterId?: string;
+  translationGroup?: string | null;
 }
 
 export interface ChapterPages {
+  manifestVersion?: string;
+  fetchedAt?: string;
+  expiresAt?: string | null;
   chapterId: string;
   title: string;
   language: string;
@@ -148,6 +197,11 @@ export interface Problem {
   errors: {field: string; code: string; message: string}[];
   availableLanguages?: string[];
   invalidTagIds?: string[];
+  availability?: ChapterAvailability;
+  stage?: string;
+  sourceId?: string;
+  retryable?: boolean;
+  retryAfterSeconds?: number | null;
 }
 
 export function problem(error: unknown): Problem {
@@ -185,6 +239,17 @@ export class Api {
   private readonly base = '/api/v1';
   private readonly libraryUrl = this.base + '/library';
   private readonly downloadsUrl = this.base + '/downloads';
+  private readonly chapterChecks = signal(new Map<string, ChapterAvailability>());
+  private readonly imageQueue = new Subject<{url: string; result: Subject<Blob>; cancel: Subject<void>; cancelled: boolean}>();
+
+  constructor() {
+    this.imageQueue.pipe(mergeMap(job => job.cancelled ? EMPTY : this.fetchImage(job.url).pipe(
+      takeUntil(job.cancel),
+      tap({next: blob => { job.result.next(blob); job.result.complete(); },
+        error: error => job.result.error(error)}),
+      catchError(() => EMPTY),
+    ), 2)).subscribe();
+  }
 
   sources() {
     return this.http.get<{items: Source[]}>(this.base + '/sources').pipe(map(data => data.items));
@@ -202,13 +267,25 @@ export class Api {
     return this.http.delete<void>(this.sourceUrl(sourceId));
   }
 
-  catalog({q, sourceId, tagIds, sort}: CatalogQuery) {
+  catalog({q, sourceId, tagIds, sort, chapterLanguages}: CatalogQuery, cursor?: string) {
     let params = new HttpParams();
     if (q) params = params.set('q', q);
     if (sourceId) params = params.set('sourceId', sourceId);
     if (sort) params = params.set('sort', sort);
     for (const id of tagIds) params = params.append('tagId', id);
-    return this.http.get<{items: TitleSummary[]}>(this.base + '/catalog', {params}).pipe(map(data => data.items));
+    for (const language of chapterLanguages ?? []) params = params.append('chapterLanguage', language);
+    if (cursor) params = params.set('cursor', cursor);
+    return this.http.get<CatalogResponse>(this.base + '/catalog', {params: params.set('limit', 24)});
+  }
+
+  syncStatus(source: string) {
+    return this.http.get<SyncStatus>(this.sourceUrl(source) + '/catalog-sync');
+  }
+  startSync(source: string) {
+    return this.http.post<SyncRun>(this.sourceUrl(source) + '/catalog-sync', {mode: 'FULL'});
+  }
+  changeSync(source: string, run: string, action: 'pause' | 'resume') {
+    return this.http.post<SyncRun>(this.sourceUrl(source) + '/catalog-sync/' + run + '/' + action, null);
   }
 
   tags(source: string) {
@@ -245,19 +322,79 @@ export class Api {
     return this.http.get<TitleDetail>(this.titleUrl(key));
   }
 
-  chapters(key: TitleKey) {
-    return this.http.get<{items: Chapter[]}>(this.titleUrl(key) + '/chapters').pipe(map(data => data.items));
+  checkChapters(key: TitleKey) {
+    return this.http.post<{availability: ChapterAvailability}>(this.titleUrl(key) + '/chapter-checks', null);
+  }
+
+  chapters(key: TitleKey, language = '') {
+    return defer(() => {
+    let polls = 0;
+    let items: Chapter[] = [];
+    const seen = new Set<string>();
+    const request = (cursor?: string | null) => this.http.get<ChapterResponse>(this.titleUrl(key) + '/chapters',
+      {params: {...(cursor ? {cursor} : {}), ...(language ? {language} : {})}}).pipe(
+      tap(data => this.chapterChecks.update(checks => new Map(checks).set(this.titleUrl(key) + '|' + language, data.availability))),
+      catchError(error => {
+        if (error.error?.availability) this.chapterChecks.update(items =>
+          new Map(items).set(this.titleUrl(key) + '|' + language, error.error.availability));
+        return throwError(() => error);
+      }),
+    );
+    const pending = (data: ChapterResponse) => ['UNVERIFIED', 'CHECKING'].includes(data.availability.state);
+    return request().pipe(
+      expand(data => {
+        if (data.page.hasMore && data.page.nextCursor && !seen.has(data.page.nextCursor)) {
+          seen.add(data.page.nextCursor);
+          return request(data.page.nextCursor);
+        }
+        if (pending(data) && polls++ < 20) {
+          return timer(2000).pipe(switchMap(() => { items = []; seen.clear(); return request(); }));
+        }
+        return EMPTY;
+      }),
+      map(data => {
+        const unique = new Map(items.map(item => [item.id, item]));
+        for (const item of data.items) unique.set(item.id, item);
+        items = [...unique.values()];
+        return items;
+      }),
+    );
+    }).pipe(retry({count: 1, delay: error => error.error?.code === 'CHAPTER_LIST_CHANGED'
+      ? timer(100) : throwError(() => error)}));
+  }
+
+  chapterAvailability(key: TitleKey, language = '') { return this.chapterChecks().get(this.titleUrl(key) + '|' + language); }
+
+  image(url: string) {
+    return new Observable<Blob>(subscriber => {
+      const result = new Subject<Blob>();
+      const job = {url, result, cancel: new Subject<void>(), cancelled: false};
+      const subscription = result.subscribe(subscriber);
+      this.imageQueue.next(job);
+      return () => { job.cancelled = true; job.cancel.next(); job.cancel.complete(); subscription.unsubscribe(); };
+    });
+  }
+
+  private fetchImage(url: string) {
+    return this.http.get(url, {responseType: 'blob'}).pipe(catchError((error: HttpErrorResponse) => {
+      if (!(error.error instanceof Blob)) return throwError(() => error);
+      return from(error.error.text()).pipe(mergeMap(text => {
+        let issue: unknown;
+        try { issue = JSON.parse(text); } catch { issue = {detail: 'Изображение не загрузилось.'}; }
+        return throwError(() => new HttpErrorResponse({error: issue, status: error.status, url: error.url ?? undefined}));
+      }));
+    }));
   }
 
   chapterCount(key: TitleKey) {
-    return this.http.get<{chapterCount: number}>(this.titleUrl(key) + '/chapter-count')
+    return this.http.get<{chapterCount: number | null; availability: ChapterAvailability}>(this.titleUrl(key) + '/chapter-count')
       .pipe(map(data => data.chapterCount));
   }
 
-  pages(key: TitleKey, chapterId: string, language: string) {
+  pages(key: TitleKey, chapterId: string, language: string, refresh = false) {
     return this.http.get<ChapterPages>(
       this.titleUrl(key) + '/chapters/' + encodeURIComponent(chapterId) + '/pages',
-      {params: {language}},
+      {params: {language, ...(refresh ? {refresh: 'true'} : {})}},
     );
   }
 

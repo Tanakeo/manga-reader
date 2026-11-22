@@ -55,7 +55,7 @@
       @if (saveFeedback()) { <span role="status">{{ saveFeedback() }}</span> }
     </div>
     @for (page of chapter.pages; track (downloadId() ?? 'online') + '/' + chapterId() + '/' + language() + '/' + page.index) {
-      <app-page-image [src]="page.imageUrl" [source]="chapter.attribution.sourceUrl" [index]="page.index"
+      <app-page-image [src]="page.imageUrl" [source]="chapter.attribution.sourceUrl" [index]="page.index" (manifestChanged)="retryContent()"
         [eager]="page.index <= targetPage()" [offline]="offline()" (settled)="markReady($event)"/>
     } @empty {
       <app-state kind="empty" message="В этой главе пока нет страниц."/>

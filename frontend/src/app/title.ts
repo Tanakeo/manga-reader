@@ -15,6 +15,7 @@ import { LocalizedTitle, TitleLocale } from './title-locale';
 import { MagneticButton } from './magnetic-button';
 import { TitleDetails } from './shared/title-details';
 import { TitlePreviewState } from './shared/title-preview-state';
+import { CatalogFacts } from './catalog-facts';
 
 @Component({
   selector: 'app-add-entry',
@@ -102,7 +103,7 @@ export class AddEntry {
 }
 
 @Component({
-  imports: [RouterLink, LucideDynamicIcon, Cover, State, AddEntry, LocalizedTitle, MagneticButton],
+  imports: [RouterLink, LucideDynamicIcon, Cover, State, AddEntry, LocalizedTitle, MagneticButton, CatalogFacts],
   templateUrl: './title.html',
 })
 export class TitlePage {
@@ -139,7 +140,16 @@ export class TitlePage {
   protected readonly backHref = computed(() => this.preview.pageReturn()?.url ??
     this.router.serializeUrl(this.router.createUrlTree(['/catalog'], {queryParams: this.backParams()})));
   protected readonly backLabel = computed(() => this.preview.pageReturn()?.url.startsWith('/library') ? 'Библиотека' : 'Каталог');
-  protected readonly chapters = rxResource({params: this.key, stream: ({params}) => this.api.chapters(params)});
+  protected readonly chapterLanguage = computed(() => {
+    const languages = this.catalogContext().getAll('chapterLanguage');
+    return languages.length === 1 ? languages[0] : '';
+  });
+  protected readonly chapters = rxResource({params: () => ({key: this.key(), language: this.chapterLanguage()}),
+    stream: ({params}) => this.api.chapters(params.key, params.language)});
+  protected readonly chapterCheck = computed(() => this.api.chapterAvailability(this.key(), this.chapterLanguage()));
+  protected setChapterLanguage(language: string) {
+    void this.router.navigate([], {queryParams: {chapterLanguage: language || null}, queryParamsHandling: 'merge'});
+  }
   protected readonly library = rxResource({stream: () => this.api.library()});
   protected readonly entry = computed(() => this.library.hasValue()
     ? this.library.value().find(entry => sameTitle(entry.title, this.key()))

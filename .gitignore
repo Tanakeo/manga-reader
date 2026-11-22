@@ -1,0 +1,28 @@
+# Unrelated generated documents and temporary tool files at repository root.
+/output/
+/tmp/
+
+# Local IDE settings.
+/.idea/
+/.vscode/
+*.iml
+
+# Local environment settings; keep configuration examples versioned.
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Logs and operating-system metadata.
+*.log
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Temporary Python environments and bytecode used by local tools.
+.venv/
+__pycache__/
+*.py[cod]
+
+# Angular, Maven and downloaded chapters have additional rules in
+# frontend/.gitignore and backend/.gitignore.

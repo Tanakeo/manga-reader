@@ -79,6 +79,14 @@ public class TitleTagRepository {
                         row.getString(2), json.readValue(row.getString(3), NAMES)));
     }
 
+    public List<Tag> dictionary(String source) {
+        return jdbc.query("""
+                SELECT external_tag_id,tag_group,names FROM source_tags WHERE source_id=:source
+                ORDER BY tag_group,coalesce(names->>'en',external_tag_id),external_tag_id
+                """, Map.of("source", source), (row, index) -> new Tag(row.getString(1),
+                row.getString(2), json.readValue(row.getString(3), NAMES)));
+    }
+
     public List<String> unsyncedMangaDexIds(String after) {
         return jdbc.queryForList("""
                 SELECT external_title_id FROM titles

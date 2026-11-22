@@ -111,6 +111,8 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1; }
 }
 .source-select select { appearance: none; padding: 0 32px 0 14px; }
 .source-select .icon { right: 11px; }
+.chapter-language select { min-width: 228px; }
+.catalog-source-error.catalog-sync-notice { color: var(--muted); }
 .catalog-options { display: flex; flex-wrap: wrap; align-items: start; gap: 10px 16px; margin-bottom: 14px; }
 .catalog-sort { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 9px; color: var(--muted); }
 .catalog-sort select { width: auto; max-width: 100%; padding-inline: 9px; }
@@ -334,7 +336,8 @@ body:has(dialog[open]) { overflow: hidden; }
 .paper .state { margin: 16px 12px; }
 .page-meta { display: flex; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 12px; padding: 14px 0; }
 .page-meta span:first-child { color: var(--accent); }
-app-page-image { display: block; margin-bottom: 4px; }
+app-page-image { display: block; margin-bottom: 4px; min-height: 160px; }
+.page-loading { min-height: 480px; background: var(--panel); }
 app-page-image img { width: 100%; height: auto; }
 .image-waiting { min-height: 55vh; background: #1b1d1d; }
 .page-fallback {
@@ -383,6 +386,7 @@ app-page-image img { width: 100%; height: auto; }
   .filters { margin-top: 17px; gap: 10px; }
   .filters select { height: 44px; font-size: 13px; }
   .source-select select { max-width: 145px; padding-inline: 10px 28px; text-overflow: ellipsis; }
+  .chapter-language select { max-width: 100%; }
   .source-select .icon { right: 8px; }
   .feature { display: flex; flex-direction: column-reverse; min-height: 0; border-radius: 18px; }
   .feature-art { align-self: stretch; margin: 12px 12px 0; border-radius: 11px; }

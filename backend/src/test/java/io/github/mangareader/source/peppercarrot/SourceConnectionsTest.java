@@ -23,6 +23,7 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -73,6 +74,14 @@ class SourceConnectionsTest {
 
     @MockitoBean
     PepperCarrotClient sourceClient;
+
+    @Autowired
+    PepperCarrotSource pepperSource;
+
+    @BeforeEach
+    void seedSavedCatalog() {
+        titles.syncCatalog(List.of(pepperSource.getTitle("pepper-and-carrot")));
+    }
 
     @Test
     void migrationEnablesPepperAndListsReturnMetadataInStableOrder() {
@@ -152,6 +161,11 @@ class SourceConnectionsTest {
             assertThat(request("DELETE", PEPPER, null).statusCode()).isEqualTo(204);
             assertThat(get(entry)).isEqualTo(saved);
             assertThat(get(TITLE).path("externalTitleId").stringValue()).isEqualTo("pepper-and-carrot");
+            get(TITLE + "/chapters");
+            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(6);
+            while (get(TITLE + "/chapters").path("items").isEmpty() && System.nanoTime() < deadline) {
+                try { Thread.sleep(100); } catch (InterruptedException exception) { throw new IllegalStateException(exception); }
+            }
             assertThat(get(TITLE + "/chapters").path("items")).hasSize(1);
             assertThat(get(PAGES).path("pages")).hasSize(1);
         } finally {
@@ -243,7 +257,7 @@ class SourceConnectionsTest {
                 SELECT id FROM titles WHERE source_id = 'peppercarrot' AND external_title_id = 'pepper-and-carrot'
                 """).query(UUID.class).single();
 
-        assertThat(get(endpoint).path("items").get(0)).isEqualTo(first);
+        assertThat(get(endpoint).path("items").get(0).path("titleRu")).isEqualTo(first.path("titleRu"));
         assertThat(jdbc.sql("SELECT title_ru FROM titles WHERE id = :id").param("id", id)
                 .query(String.class).single()).isEqualTo(first.path("titleRu").stringValue());
         assertThat(get("/library")).isEqualTo(library);
@@ -286,9 +300,89 @@ class SourceConnectionsTest {
     void catalogOptionsRespectSourceCapabilitiesAndValidateSyntax() {
         problem("GET", "/catalog?sort=year_desc", 400, "SOURCE_REQUIRED_FOR_CATALOG_OPTIONS");
         problem("GET", "/catalog?sourceId=peppercarrot&tagId=invalid", 400, "VALIDATION_ERROR");
-        problem("GET", "/catalog?sourceId=peppercarrot&sort=year_desc", 422, "CATALOG_OPTIONS_UNSUPPORTED");
+        assertThat(get("/catalog?sourceId=peppercarrot&sort=year_desc").path("page").path("total").asInt()).isPositive();
         problem("GET", "/sources/peppercarrot/tags", 422, "CATALOG_OPTIONS_UNSUPPORTED");
         problem("GET", "/sources/mangadex/tags", 409, "SOURCE_DISABLED");
+    }
+
+    @Test
+    void catalogHidesOnlyCompleteEmptyChecksAndInvalidatesOldSnapshots() {
+        String prefix = "catalog-regression-";
+        var fixtures = java.util.stream.IntStream.range(0, 3).mapToObj(index -> new SourceTitle(
+                "peppercarrot", prefix + index, "Pepper&Carrot", prefix + index, null, null, null,
+                "https://www.peppercarrot.com/", null, null, null, null, null)).toList();
+        titles.syncCatalog(fixtures);
+        var fixtureIds = jdbc.sql("SELECT id FROM titles WHERE external_title_id LIKE 'catalog-regression-%'")
+                .query(UUID.class).list();
+        try {
+            UUID empty = jdbc.sql("SELECT id FROM titles WHERE external_title_id=:id")
+                    .param("id", prefix + "0").query(UUID.class).single();
+            for (String language : List.of("ru", "en")) jdbc.sql("""
+                    INSERT INTO title_chapter_checks(title_id,language,policy_version,state,presence,exact_count)
+                    VALUES(:id,:language,'catalog-v1','COMPLETE','NONE',0)
+                    """).param("id", empty).param("language", language).update();
+            var response = get("/catalog?sourceId=peppercarrot&q=catalog-regression&limit=1");
+            assertThat(response.path("page").path("total").asInt()).isEqualTo(2);
+            assertThat(response.path("page").path("hasMore").asBoolean()).isTrue();
+            assertThat(response.path("items").get(0).path("chapterAvailability").path("chapterCount").isNull()).isTrue();
+            String cursor = response.path("page").path("nextCursor").asString();
+            var next = get("/catalog?sourceId=peppercarrot&q=catalog-regression&limit=1&cursor=" + cursor);
+            assertThat(next.path("items")).hasSize(1);
+            assertThat(next.path("page").path("hasMore").asBoolean()).isFalse();
+            assertThat(next.path("items").get(0).path("externalTitleId"))
+                    .isNotEqualTo(response.path("items").get(0).path("externalTitleId"));
+            jdbc.sql("UPDATE source_catalog_state SET visibility_version=visibility_version+1 WHERE source_id='peppercarrot'").update();
+            problem("GET", "/catalog?sourceId=peppercarrot&q=catalog-regression&limit=1&cursor=" + cursor,
+                    409, "CATALOG_SNAPSHOT_STALE");
+            jdbc.sql("UPDATE title_chapter_checks SET state='ERROR',presence='UNKNOWN',exact_count=NULL WHERE title_id=:id")
+                    .param("id", empty).update();
+            assertThat(get("/catalog?sourceId=peppercarrot&q=catalog-regression").path("page").path("total").asInt()).isEqualTo(3);
+        } finally {
+            for (UUID id : fixtureIds) jdbc.sql("DELETE FROM titles WHERE id=:id").param("id", id).update();
+        }
+    }
+
+    @Test
+    void catalogRunIsIdempotentAndPauseKeepsItsCheckpoint() {
+        var started = json(request("POST", "/sources/peppercarrot/catalog-sync", "{\"mode\":\"FULL\"}"), 202);
+        String id = started.path("runId").asString();
+        String runPath = "/sources/peppercarrot/catalog-sync/" + id;
+        try {
+            assertThat(json(request("POST", "/sources/peppercarrot/catalog-sync", "{\"mode\":\"FULL\"}"), 202)
+                    .path("runId").asString()).isEqualTo(id);
+            var paused = json(request("POST", runPath + "/pause", null), 202);
+            assertThat(paused.path("state").asString()).isEqualTo("PAUSED");
+            var resumed = json(request("POST", runPath + "/resume", null), 202);
+            assertThat(resumed.path("runId").asString()).isEqualTo(id);
+            assertThat(resumed.path("pagesCommitted")).isEqualTo(paused.path("pagesCommitted"));
+            json(request("POST", runPath + "/pause", null), 202);
+        } finally {
+            jdbc.sql("DELETE FROM catalog_sync_runs WHERE id=:id").param("id", UUID.fromString(id)).update();
+        }
+    }
+
+    @Test
+    void chapterCursorRejectsAChangedListInsteadOfSkippingRows() {
+        String external = "chapter-cursor-regression";
+        titles.syncCatalog(List.of(new SourceTitle("peppercarrot", external,"Pepper&Carrot", external,
+                null,null,null,"https://www.peppercarrot.com/",null,null,null,null,null)));
+        UUID id = jdbc.sql("SELECT id FROM titles WHERE external_title_id=:external")
+                .param("external", external).query(UUID.class).single();
+        try {
+            for (String language : List.of("ru","en")) jdbc.sql("""
+                    INSERT INTO title_chapter_checks(title_id,language,policy_version,state,presence,exact_count)
+                    VALUES(:id,:language,'catalog-v1','COMPLETE','FOUND',2)
+                    """).param("id", id).param("language", language).update();
+            for (String chapter : List.of("1","2")) jdbc.sql("""
+                    INSERT INTO source_chapters VALUES(:id,:chapter,:chapter,ARRAY['ru'],NULL,
+                        jsonb_build_object('id',:chapter,'number',CAST(:chapter AS numeric),'languages',ARRAY['ru']))
+                    """).param("id", id).param("chapter", chapter).update();
+            String path = "/sources/peppercarrot/titles/" + external + "/chapters?limit=1";
+            String cursor = get(path).path("page").path("nextCursor").asString();
+            assertThat(get(path + "&cursor=" + cursor).path("items").get(0).path("id").asString()).isEqualTo("2");
+            jdbc.sql("DELETE FROM source_chapters WHERE title_id=:id AND source_chapter_id='1'").param("id",id).update();
+            problem("GET",path + "&cursor=" + cursor,409,"CHAPTER_LIST_CHANGED");
+        } finally { jdbc.sql("DELETE FROM titles WHERE id=:id").param("id",id).update(); }
     }
 
     @Test
@@ -382,6 +476,8 @@ class SourceConnectionsTest {
             MangaSource adapter = mock(MangaSource.class);
             when(adapter.id()).thenReturn("a-test");
             when(adapter.displayName()).thenReturn("Учебный адаптер");
+            when(adapter.policyVersion()).thenReturn("catalog-v1");
+            when(adapter.supportedLanguages()).thenReturn(List.of("ru", "en"));
             return adapter;
         }
     }

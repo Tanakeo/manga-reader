@@ -27,9 +27,20 @@ class PublicSourcesTest {
     private final PublicSourceClient client = spy(new PublicSourceClient(json));
 
     @Test
+    void truncatedKakalotFeedCannotConfirmAnEmptyTitle() {
+        var source = new MangaKakalotSource(client);
+        doReturn(json.readTree("""
+                {"success":true,"data":{"chapters":[],"pagination":{"total":9,"offset":0,"limit":-1}}}
+                """)).when(client).json(eq(URI.create("https://www.katamanga.com/api/manga/sample/chapters?limit=-1")),
+                isNull(), notNull());
+        assertThatExceptionOfType(ApiException.class).isThrownBy(() -> source.scanChapters("sample"))
+                .matches(error -> "SOURCE_BAD_RESPONSE".equals(error.code()));
+    }
+
+    @Test
     void mangaKakalotUsesPublicFeedOnDeniedSearchAndKeepsImageOrder() {
         var source = new MangaKakalotSource(client);
-        URI feed = URI.create("https://www.kakamanga.com/manga-list/hot-manga?page=1");
+        URI feed = URI.create("https://www.katamanga.com/manga-list/hot-manga?page=1");
         doReturn(Jsoup.parse("""
                 <div class="list-comic-item-wrap">
                   <h3><a href="/manga/sample">Sample</a></h3>
@@ -41,21 +52,22 @@ class PublicSourcesTest {
         doReturn(json.readTree("""
                 {"success":true,"data":{"chapters":[
                   {"chapter_slug":"chapter-2","chapter_name":"Second","chapter_num":2},
-                  {"chapter_slug":"chapter-1","chapter_name":"First","chapter_num":1}]}}
+                  {"chapter_slug":"chapter-1","chapter_name":"First","chapter_num":1}],
+                  "pagination":{"total":2,"limit":-1,"offset":0}}}
                 """)).when(client).json(
-                eq(URI.create("https://www.kakamanga.com/api/manga/sample/chapters?limit=-1")), isNull(), notNull());
+                eq(URI.create("https://www.katamanga.com/api/manga/sample/chapters?limit=-1")), isNull(), notNull());
         doReturn(Jsoup.parse("""
                 <div class="manga-info-top">
                   <h1>Sample</h1><ul><li>Author(s) : Author</li></ul>
                 </div>
                 <div id="contentBox"><h2>Summary</h2><p>Example description.</p></div>
-                """)).when(client).html(eq(URI.create("https://www.kakamanga.com/manga/sample")), notNull());
+                """)).when(client).html(eq(URI.create("https://www.katamanga.com/manga/sample")), notNull());
         doReturn(Jsoup.parse("""
                 <script>
                   var cdns = ["https://imgs-2.2xstorage.com"];
                   var chapterImages = ["sample/1/b.webp", "sample/1/a.webp"];
                 </script>
-                """)).when(client).html(eq(URI.create("https://www.kakamanga.com/manga/sample/chapter-1")), notNull());
+                """)).when(client).html(eq(URI.create("https://www.katamanga.com/manga/sample/chapter-1")), notNull());
 
         assertThat(source.searchTitles("sample")).extracting(SourceTitle::externalTitleId).containsExactly("sample");
         assertThatExceptionOfType(ApiException.class).isThrownBy(() -> source.searchTitles("unknown"))
@@ -99,16 +111,16 @@ class PublicSourcesTest {
         doReturn(json.readTree("""
                 {"data":{"imageServers":[
                   {"id":"main","url":"https://img.mixlib.me","site_ids":[1]},
-                  {"id":"secondary","url":"https://img3.cdnlibs.org","site_ids":[1]}]}}
+                  {"id":"secondary","url":"https://img3.cdnrulib.link","site_ids":[1]}]}}
                 """)).when(client).json(eq(URI.create("https://api2.mangalib.me/api/constants?fields%5B%5D=imageServers")),
                 eq("1"), isNull());
 
         assertThat(source.searchTitles("")).extracting(SourceTitle::title).containsExactly("Пример");
-        assertThat(source.listChapters("42--sample")).extracting(SourceChapter::id).containsExactly("2");
+        assertThat(source.listChapters("42--sample")).extracting(SourceChapter::id).containsExactly("2~5");
         var chapter = source.getPages("42--sample", "2", "ru");
         assertThat(chapter.attribution().creditsText()).contains("Команда");
         assertThat(chapter.pages()).extracting(Page::imageUrl).containsExactly(
-                "https://img3.cdnlibs.org/manga/sample/a.webp", "https://img.mixlib.me/sample/b.webp");
+                "https://img3.cdnrulib.link/manga/sample/a.webp", "https://img.mixlib.me/sample/b.webp");
     }
 
     private static ApiException denied() {

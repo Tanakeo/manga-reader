@@ -15,6 +15,9 @@
         <h1 class="page-heading" data-title-heading tabindex="-1" [class.long-title]="name.length > 45">{{ name }}</h1>
         @if (item.author) { <p class="muted">{{ item.author }}</p> }
         @if (item.description) { <p class="title-description">{{ item.description }}</p> }
+        @if (item.metadataError; as error) {
+          <p class="feedback" role="status">Показано сохранённое описание. {{ error.detail }}</p>
+        }
         @if (title.isLoading()) { <p class="muted title-summary-pending" role="status">Загружаем описание…</p> }
         @if (title.error(); as error) {
           <p class="error" role="alert">{{ problem(error).detail }}</p>
@@ -67,16 +70,27 @@
       <section class="chapters" id="chapters" aria-labelledby="chapter-heading">
         <div class="section-heading chapter-heading">
           <h2 id="chapter-heading">Главы</h2>
-          @if (chapters.hasValue()) { <span class="count">{{ chapters.value().length }}</span> }
+          @if (chapterCheck()?.chapterCount !== null && chapterCheck()?.chapterCount !== undefined) {
+            <span class="count">{{ chapterCheck()?.chapterCount }}</span>
+          }
           @if (downloadSupported()) {
             <a class="back-link" [routerLink]="[]" queryParamsHandling="preserve" fragment="title-downloads">Скачанные главы</a>
           }
         </div>
+        <label class="catalog-sort title-chapter-filter">Язык глав
+          <select [value]="chapterLanguage()" (change)="setChapterLanguage($any($event.target).value)">
+            <option value="">Все доступные</option><option value="ru">Русский</option><option value="en">Английский</option>
+          </select>
+        </label>
+        <app-catalog-facts [item]="item" [availability]="chapterCheck()" [language]="chapterLanguage()" (changed)="chapters.reload()"/>
         @if (chapters.isLoading()) {
           <app-state kind="loading" message="Загружаем главы…"/>
         } @else if (chapters.error(); as error) {
           <app-state kind="error" [message]="problem(error).detail" (retry)="chapters.reload()"/>
         } @else if (chapters.hasValue()) {
+          @if (chapterCheck()?.state === 'PARTIAL' || chapterCheck()?.state === 'ERROR') {
+            <p class="feedback" role="status">Проверка глав неполная. Показаны уже найденные переводы.</p>
+          }
           @if (availableLanguages().length) {
             <p class="muted languages">Доступные языки
               @for (language of availableLanguages(); track language) { <span>{{ lang(language) }}</span> }
@@ -88,7 +102,7 @@
                 <span class="chapter-number">{{ chapter.number ?? '—' }}</span>
                 <div>
                   <h3>{{ chapter.title }}</h3>
-                  @if (chapter.pageCount > 0) { <p class="muted">Страниц: {{ chapter.pageCount }}</p> }
+                  @if (chapter.pageCount && chapter.pageCount > 0) { <p class="muted">Страниц: {{ chapter.pageCount }}</p> }
                   @if (downloadSupported()) {
                     @for (language of chapter.languages; track language) {
                       @if (downloads.find(chapter.id, language); as saved) {
@@ -123,7 +137,8 @@
                 }
               </li>
             } @empty {
-              <li><app-state kind="empty" message="У этого тайтла пока нет глав."/></li>
+              <li><app-state kind="empty" [message]="chapterCheck()?.state === 'COMPLETE'
+                ? 'Доступных глав на выбранных языках пока нет.' : 'Проверка глав ещё не завершена.'"/></li>
             }
           </ol>
         }

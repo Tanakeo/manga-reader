@@ -23,6 +23,14 @@
         </select>
         <svg class="icon" [lucideIcon]="chevron" [size]="15" aria-hidden="true"/>
       </label>
+      <label class="source-select chapter-language">
+        <select aria-label="Язык глав" [ngModel]="query().chapterLanguages?.[0] ?? ''"
+          (ngModelChange)="setChapterLanguage($event)">
+          <option value="">Все доступные языки глав</option>
+          <option value="ru">Главы на русском</option>
+          <option value="en">Главы на английском</option>
+        </select>
+      </label>
     </div>
   </div>
 
@@ -80,7 +88,7 @@
       </div>
     }
   }
-  @if (selectedTags().length || query().q || query().sort) {
+  @if (selectedTags().length || query().q || query().sort || query().chapterLanguages?.length) {
     <div class="tag-list catalog-selected" aria-label="Применённые фильтры">
       @for (tag of selectedTags(); track tag.id) {
         <button type="button" class="status-tag tag-remove" (click)="removeTags([tag.id])"
@@ -91,6 +99,17 @@
   }
 
   @let result = results;
+  @if (response.hasValue() && response.value().partial) {
+    <div class="catalog-source-error catalog-sync-notice" role="status">
+      <p>Каталог пополняется. Показаны уже собранные тайтлы.</p>
+      @for (state of response.value().sourceStates; track state.sourceId) {
+        @if (state.error; as issue) { <p>{{ sourceName(state.sourceId) }} · {{ issue.detail }}</p> }
+      }
+      <a class="button secondary compact" routerLink="/browse">Состояние источников</a>
+      <button class="button secondary compact" type="button" (click)="result.reload()">Обновить</button>
+    </div>
+  }
+  @if (response.notice()) { <p class="feedback" role="status">{{ response.notice() }}</p> }
   @if (result.hasValue() && sources.error(); as error) {
     <div class="catalog-source-error" role="alert">
       <p>Список источников недоступен. {{ problem(error).detail }}</p>
@@ -114,7 +133,7 @@
         <p>{{ issue.detail }}</p>
         <button class="button secondary" type="button" (click)="removeTags(issue.invalidTagIds)">Убрать неизвестные теги</button>
       </div>
-    } @else if (issue.code === 'CATALOG_OPTIONS_UNSUPPORTED') {
+    } @else if (issue.code === 'CATALOG_OPTIONS_UNSUPPORTED' || issue.code === 'LANGUAGE_UNAVAILABLE') {
       <div class="state" role="alert">
         <p>{{ issue.detail }}</p>
         <button class="button secondary" type="button" (click)="reset()">Сбросить поиск и фильтры</button>
@@ -135,7 +154,7 @@
             <p class="feature-description">{{ description }}</p>
           }
           <p class="meta">@if (item.author) { {{ item.author }} <span>·</span> } {{ item.sourceName }}</p>
-          <app-catalog-facts [item]="item"/>
+          <app-catalog-facts [item]="item" [language]="query().chapterLanguages?.length === 1 ? query().chapterLanguages![0] : ''"/>
           <a class="button primary feature-action" [titlePreview]="item" [routerLink]="titleLink(item)" [queryParams]="titleContext()">
             Открыть тайтл <svg class="icon" [lucideIcon]="arrow" [size]="18" aria-hidden="true"/>
           </a>
@@ -147,14 +166,16 @@
     } @else if (result.value().length) {
       <div class="catalog-grid">
         @for (item of result.value(); track item.sourceId + '/' + item.externalTitleId) {
-          <a class="catalog-card" data-title-card [titlePreview]="item" [routerLink]="titleLink(item)" [queryParams]="titleContext()">
+          <article class="catalog-card" data-title-card>
+            <a [titlePreview]="item" [routerLink]="titleLink(item)" [queryParams]="titleContext()" [attr.aria-label]="'Открыть ' + (item | localizedTitle:titleLanguage())">
             <app-cover [src]="item.coverUrl" [titleKey]="item" label=""/>
+            </a>
             <div>
-              <h2>{{ item | localizedTitle:titleLanguage() }}</h2>
+              <h2><a [titlePreview]="item" [routerLink]="titleLink(item)" [queryParams]="titleContext()">{{ item | localizedTitle:titleLanguage() }}</a></h2>
               <p class="muted">{{ item.sourceName }}</p>
-              <app-catalog-facts [item]="item"/>
+              <app-catalog-facts [item]="item" [language]="query().chapterLanguages?.length === 1 ? query().chapterLanguages![0] : ''"/>
             </div>
-          </a>
+          </article>
         }
       </div>
     } @else if (sources.hasValue() && !sources.value().length) {
@@ -167,9 +188,17 @@
       </app-state>
     }
     <div class="inventory">
-      <span>{{ countLabel(result.value().length) }}</span>
+      <span>{{ countLabel(currentPage()?.total ?? result.value().length) }}</span>
       @if (featured(); as item) { <span>Источник <b>{{ item.sourceName }}</b></span> }
     </div>
+    @if (currentPage()?.hasMore) {
+      <button class="button secondary" type="button" [disabled]="loadingMore()" (click)="loadMore()">
+        {{ loadingMore() ? 'Загружаем…' : moreError() ? 'Повторить подгрузку' : 'Показать ещё' }}
+      </button>
+    } @else if (result.value().length) {
+      <p class="muted catalog-end" role="status">Все тайтлы этой выдачи показаны.</p>
+    }
+    @if (moreError()) { <p class="feedback error" role="alert">{{ moreError() }}</p> }
   }
 </main>
 @if (detail.hasValue() && detail.value().license; as license) {

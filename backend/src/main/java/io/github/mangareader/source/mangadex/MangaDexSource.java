@@ -8,6 +8,8 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import io.github.mangareader.error.ApiException;
 import io.github.mangareader.library.TitleTagRepository;
 import io.github.mangareader.source.MangaSource;
+import io.github.mangareader.source.SourceScan.CatalogPage;
+import io.github.mangareader.source.SourceScan.ChapterResult;
 import io.github.mangareader.source.SourceModels.Attribution;
 import io.github.mangareader.source.SourceModels.ChapterPages;
 import io.github.mangareader.source.SourceModels.Page;
@@ -87,6 +89,86 @@ public class MangaDexSource implements MangaSource {
     @Override
     public String websiteUrl() {
         return WEBSITE;
+    }
+
+    @Override
+    public String policyVersion() {
+        return excludedGroups.isEmpty() ? "catalog-v1" :
+                "catalog-v1-" + String.join("-", excludedGroups.stream().sorted().toList());
+    }
+
+    @Override
+    public String incrementalCursor(Instant since) {
+        return "u:" + java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+                .withZone(java.time.ZoneOffset.UTC).format(since.minusSeconds(1)) + "|0";
+    }
+
+    @Override
+    public CatalogPage catalogPage(String cursor) {
+        String[] position = cursor == null ? new String[]{"", "0"} : cursor.split("\\|", -1);
+        boolean incremental = position[0].startsWith("u:");
+        String since = incremental ? position[0].substring(2) : position[0];
+        String dateField = incremental ? "updatedAt" : "createdAt";
+        int offset = Integer.parseInt(position[1]);
+        var response = client.get(uri -> {
+            uri.path("/manga").queryParam("limit", 100).queryParam("offset", offset)
+                    .queryParam("includes[]", "cover_art", "author")
+                    .queryParam("contentRating[]", "safe", "suggestive").queryParam("order[" + dateField + "]", "asc");
+            if (!since.isEmpty()) uri.queryParam(dateField + "Since", since);
+            return uri.build();
+        });
+        var rows = dataArray(response);
+        if (!response.path("total").isIntegralNumber() || response.path("offset").asInt(-1) != offset) {
+            throw bad("Missing or inconsistent MangaDex pagination");
+        }
+        long total = response.path("total").asLong();
+        var items = elements(rows).filter(this::supportedTitle).map(this::readTitle).toList();
+        String prefix = incremental ? "u:" : "";
+        String next = prefix + since + "|" + (offset + rows.size());
+        String reason = null;
+        if (offset + rows.size() >= total) {
+            next = null;
+            reason = "EXHAUSTED";
+        } else if (rows.isEmpty()) {
+            next = null;
+            reason = "PARSE_CHANGED";
+        } else if (offset + rows.size() >= 9900) {
+            String last = rows.path(rows.size() - 1).path("attributes").path(dateField).asString();
+            Instant boundary = Instant.parse(last).minusSeconds(1);
+            String newSince = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+                    .withZone(java.time.ZoneOffset.UTC).format(boundary);
+            if (!since.isEmpty() && newSince.compareTo(since) <= 0) {
+                next = null;
+                reason = "SOURCE_LIMIT";
+            } else next = prefix + newSince + "|0";
+        }
+        return new CatalogPage(items, next, cursor == null ? total : null, reason,
+                "offset=" + offset + ", rows=" + rows.size() + ", total=" + total + ", since=" + since);
+    }
+
+    @Override
+    public ChapterResult scanChapters(String id) {
+        feeds.invalidate(id);
+        var items = loadFeed(id);
+        return new ChapterResult(items.stream().map(Edition::chapter).toList(), true, items.size(), 0, "EXHAUSTED");
+    }
+
+    @Override
+    public void refreshManifest(String chapterId) {
+        manifests.invalidate(chapterId);
+    }
+
+    @Override
+    public io.github.mangareader.source.PublicSourceClient.Image serverImage(
+            String title, String chapter, String language, int index) {
+        try {
+            var image = getImage(title, chapter, language, index);
+            return new io.github.mangareader.source.PublicSourceClient.Image(image.type(), image.bytes());
+        } catch (ApiException exception) {
+            if (exception.status().is4xxClientError()) throw exception;
+            throw ApiException.withDetails(HttpStatus.SERVICE_UNAVAILABLE, "IMAGE_UNAVAILABLE",
+                    "MangaDex временно не отдаёт изображение.", Map.of("stage", "IMAGE", "retryable", true));
+        }
     }
 
     @Override
@@ -282,38 +364,66 @@ public class MangaDexSource implements MangaSource {
 
     private List<Edition> loadFeed(String id) {
         var unique = new LinkedHashMap<String, Edition>();
-        for (int offset = 0; offset < MAX_FEED_RESULTS; offset += FEED_LIMIT) {
+        int offset = 0;
+        String since = "";
+        String lastFingerprint = "";
+        while (true) {
             int start = offset;
-            JsonNode response = client.get(uri -> uri.path("/manga/" + id + "/feed")
-                    .queryParam("limit", FEED_LIMIT).queryParam("offset", start)
-                    .queryParam("translatedLanguage[]", "en", "ru")
-                    .queryParam("contentRating[]", "safe", "suggestive")
-                    .queryParam("includes[]", "scanlation_group")
-                    .queryParam("order[volume]", "asc").queryParam("order[chapter]", "asc")
-                    .queryParam("order[publishAt]", "asc").build());
-            if (response == null) {
-                throw notFound("TITLE_NOT_FOUND");
+            String boundary = since;
+            JsonNode response = client.get(uri -> {
+                uri.path("/manga/" + id + "/feed").queryParam("limit", FEED_LIMIT).queryParam("offset", start)
+                        .queryParam("translatedLanguage[]", "en", "ru")
+                        .queryParam("contentRating[]", "safe", "suggestive")
+                        .queryParam("includeExternalUrl", 0).queryParam("includeEmptyPages", 0)
+                        .queryParam("includeFuturePublishAt", 0).queryParam("includes[]", "scanlation_group")
+                        .queryParam("order[createdAt]", "asc");
+                if (!boundary.isEmpty()) uri.queryParam("createdAtSince", boundary);
+                return uri.build();
+            });
+            if (response == null) throw notFound("TITLE_NOT_FOUND");
+            if (!response.path("total").isIntegralNumber()) throw bad("Missing MangaDex feed total");
+            var data = dataArray(response);
+            int total = response.path("total").asInt();
+            if (start + data.size() < total && data.isEmpty()) throw bad("Empty nonterminal chapter page");
+            String fingerprint = elements(data).map(row -> row.path("id").asString()).collect(Collectors.joining(","));
+            if (!fingerprint.isEmpty() && fingerprint.equals(lastFingerprint) && !boundary.isEmpty()) {
+                throw ApiException.problem(HttpStatus.SERVICE_UNAVAILABLE, "CHAPTER_SCAN_LIMIT",
+                        "Источник повторил страницу глав на временной границе.");
             }
-            JsonNode data = dataArray(response);
+            lastFingerprint = fingerprint;
             for (JsonNode row : data) {
                 Edition edition = readEdition(row);
-                if (edition != null) {
-                    unique.putIfAbsent(edition.chapter().id(), edition);
+                if (edition != null) unique.putIfAbsent(edition.chapter().id(), edition);
+            }
+            if (start + data.size() >= total) break;
+            if (data.size() < FEED_LIMIT) throw bad("Truncated MangaDex chapter page");
+            if (start + data.size() >= 9500) {
+                Instant last = Instant.parse(data.path(data.size() - 1).path("attributes").path("createdAt").asString());
+                String next = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+                        .withZone(java.time.ZoneOffset.UTC).format(last.minusSeconds(1));
+                if (!since.isEmpty() && next.compareTo(since) <= 0) {
+                    throw ApiException.problem(HttpStatus.SERVICE_UNAVAILABLE, "CHAPTER_SCAN_LIMIT",
+                            "Главы на одной временной границе превышают окно источника.");
                 }
-            }
-            if (data.size() < FEED_LIMIT || start + data.size() >= response.path("total").asInt()) {
-                break;
-            }
+                since = next;
+                offset = 0;
+            } else offset += data.size();
         }
-        return List.copyOf(unique.values());
+        return unique.values().stream().sorted(Comparator
+                .comparing((Edition edition) -> chapterNumber(edition.volume()), Comparator.nullsFirst(Comparator.naturalOrder()))
+                .thenComparing(Edition::volume, Comparator.nullsFirst(Comparator.naturalOrder()))
+                .thenComparing(edition -> edition.chapter().number(), Comparator.nullsLast(Comparator.naturalOrder()))
+                .thenComparing(edition -> edition.chapter().id())).toList();
     }
-
     private Edition readEdition(JsonNode row) {
         JsonNode attributes = row.path("attributes");
         String id = row.path("id").asString();
         String language = attributes.path("translatedLanguage").asString();
         int pageCount = attributes.path("pages").asInt();
-        if (!UUID.matcher(id).matches() || !LANGUAGES.contains(language) || pageCount < 1
+        if (!UUID.matcher(id).matches() || !LANGUAGES.contains(language) || !attributes.path("pages").isIntegralNumber()) {
+            throw bad("Malformed MangaDex chapter metadata");
+        }
+        if (pageCount < 1
                 || text(attributes.path("externalUrl")) != null
                 || relations(row, "scanlation_group").anyMatch(group -> excludedGroups.contains(group.path("id").asString()))) {
             return null;
@@ -323,7 +433,12 @@ public class MangaDexSource implements MangaSource {
         if (title == null) {
             title = number == null ? "Дополнительная глава" : "Глава " + number;
         }
-        var chapter = new SourceChapter(id, chapterNumber(number), title, List.of(language), pageCount);
+        String volume = text(attributes.path("volume"));
+        String logical = number == null ? id : (volume == null ? "" : volume) + ":" +
+                (chapterNumber(number) == null ? number : chapterNumber(number).stripTrailingZeros().toPlainString());
+        String published = text(attributes.path("publishAt"));
+        var chapter = new SourceChapter(id, chapterNumber(number), title, List.of(language), pageCount,
+                logical, names(row, "scanlation_group"), published == null ? null : Instant.parse(published),volume,number);
         return new Edition(chapter, text(attributes.path("volume")), language, names(row, "scanlation_group"));
     }
 

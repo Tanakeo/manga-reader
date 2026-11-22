@@ -62,8 +62,16 @@ class MangaDexClient {
             }
             if (status == 429) {
                 backOff(exception.getResponseHeaders());
+                throw ApiException.withDetails(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
+                        "SOURCE_RATE_LIMITED", "Источник ограничил частоту запросов.",
+                        java.util.Map.of("stage", "CATALOG", "retryable", true,
+                                "retryAfterSeconds", Math.max(1, TimeUnit.NANOSECONDS.toSeconds(blockedUntil-System.nanoTime()))));
             }
-            if (status == 401 || status == 403 || status == 429 || status >= 500) {
+            if (status == 401 || status == 403) {
+                throw ApiException.problem(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
+                        "SOURCE_ACCESS_DENIED", "Источник ограничил доступ к этим данным.");
+            }
+            if (status >= 500) {
                 throw ApiException.sourceUnavailable(exception);
             }
             throw ApiException.sourceBadResponse(exception);
@@ -124,7 +132,10 @@ class MangaDexClient {
     private synchronized void acquireRequestSlot() {
         long now = System.nanoTime();
         if (blockedUntil > now) {
-            throw ApiException.sourceUnavailable(new IllegalStateException("MangaDex rate limit"));
+            throw ApiException.withDetails(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
+                    "SOURCE_RATE_LIMITED", "Источник ограничил частоту запросов.",
+                    java.util.Map.of("retryable", true, "retryAfterSeconds",
+                            Math.max(1,TimeUnit.NANOSECONDS.toSeconds(blockedUntil-now))));
         }
         try {
             TimeUnit.NANOSECONDS.sleep(Math.max(0, nextRequest - now));

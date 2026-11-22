@@ -73,6 +73,6 @@ public class SourceConnectionService {
 
     private Source metadata(MangaSource adapter) {
         return new Source(adapter.id(), adapter.displayName(), adapter.websiteUrl(),
-                adapter.supportsTags(), adapter.catalogSorts());
+                adapter.supportsTags(), List.of("relevance", "year_asc", "year_desc", "latest_chapter_desc"));
     }
 }

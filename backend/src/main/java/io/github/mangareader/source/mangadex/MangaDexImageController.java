@@ -17,14 +17,6 @@ class MangaDexImageController {
         this.source = source;
     }
 
-    @GetMapping("/api/v1/sources/mangadex/titles/{titleId}/chapters/{chapterId}/images/{index}")
-    ResponseEntity<byte[]> image(@PathVariable String titleId, @PathVariable String chapterId,
-                                 @PathVariable int index, @RequestParam(required = false) String language) {
-        ApiInputs.requireMatch("language", language, ApiInputs.LANGUAGE, 32);
-        MangaDexClient.Image image = source.getImage(titleId, chapterId, language, index);
-        return response(image, CacheControl.noStore());
-    }
-
     @GetMapping("/api/v1/sources/mangadex/titles/{titleId}/covers/{fileName}")
     ResponseEntity<byte[]> cover(@PathVariable String titleId, @PathVariable String fileName) {
         return response(source.getCover(titleId, fileName), CacheControl.maxAge(Duration.ofHours(1)));

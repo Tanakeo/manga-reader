@@ -110,6 +110,13 @@ public class TitleRepository {
                 """, Map.of("sourceId", sourceId, "externalTitleId", externalTitleId), UUID.class);
     }
 
+    public java.util.Optional<SourceTitle> find(String sourceId, String externalTitleId) {
+        return jdbc.query("""
+                SELECT * FROM titles WHERE source_id=:source AND external_title_id=:external
+                """, Map.of("source", sourceId, "external", externalTitleId), TitleRepository::readTitle)
+                .stream().findFirst();
+    }
+
     private static MapSqlParameterSource parameters(SourceTitle title) {
         return new MapSqlParameterSource()
                 .addValue("id", UUID.randomUUID())

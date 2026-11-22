@@ -9,11 +9,12 @@ import { Api, Extension, problem, Source, SourceIdentity } from './api';
 import { State } from './common';
 import { MagneticButton } from './magnetic-button';
 import { CommandSearch } from './shared/command-search';
+import { SyncProgress } from './sync-progress';
 
 type BrowseTab = 'sources' | 'extensions';
 
 @Component({
-  imports: [RouterLink, LucideDynamicIcon, State, MagneticButton, CommandSearch],
+  imports: [RouterLink, LucideDynamicIcon, State, MagneticButton, CommandSearch, SyncProgress],
   templateUrl: './browse.html',
   styleUrl: './browse.css',
 })

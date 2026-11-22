@@ -1,6 +1,7 @@
 package io.github.mangareader.source.mangadex;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -16,6 +17,53 @@ import org.springframework.web.util.UriBuilder;
 import tools.jackson.databind.json.JsonMapper;
 
 class MangaDexSourceTest {
+    @Test
+    void incrementalCatalogUsesUpdatedDateAndPreservesWindowKind() {
+        var client = mock(MangaDexClient.class);
+        var uris = new DefaultUriBuilderFactory("https://api.mangadex.org");
+        var json = JsonMapper.builder().build();
+        when(client.get(any())).thenAnswer(invocation -> {
+            Function<UriBuilder, URI> request = invocation.getArgument(0);
+            assertThat(request.apply(uris.builder()).getQuery())
+                    .contains("updatedAtSince=2026-11-19T23:59:59", "order[updatedAt]=asc")
+                    .doesNotContain("createdAtSince");
+            return json.readTree("{\"data\":[],\"total\":0,\"offset\":0}");
+        });
+        var adapter = new MangaDexSource(client, mock(TitleTagRepository.class), "");
+        var result = adapter.catalogPage(adapter.incrementalCursor(java.time.Instant.parse("2026-11-20T00:00:00Z")));
+        assertThat(result.stopReason()).isEqualTo("EXHAUSTED");
+    }
+
+    @Test
+    void missingFeedTotalCannotConfirmZeroChapters() {
+        var client = mock(MangaDexClient.class);
+        var json = JsonMapper.builder().build();
+        when(client.get(any())).thenReturn(json.readTree("{\"data\":[]}"));
+        var adapter = new MangaDexSource(client, mock(TitleTagRepository.class), "");
+        assertThatExceptionOfType(io.github.mangareader.error.ApiException.class)
+                .isThrownBy(() -> adapter.scanChapters("32d76d19-8a05-4db0-9fc2-e0b0648fe9d0"))
+                .matches(error -> "SOURCE_BAD_RESPONSE".equals(error.code()));
+    }
+
+    @Test
+    void catalogAdvancesItsTimeWindowAndReportsAnUnsplitBoundary() {
+        var client = mock(MangaDexClient.class);
+        var json = JsonMapper.builder().build();
+        when(client.get(any())).thenReturn(json.readTree("""
+                {"total":50000,"offset":9900,"data":[
+                  {"id":"32d76d19-8a05-4db0-9fc2-e0b0648fe9d0","relationships":[],
+                   "attributes":{"contentRating":"safe","title":{"en":"Sample"},"tags":[],
+                   "createdAt":"2020-01-01T00:00:00Z"}}]}
+                """));
+        var adapter = new MangaDexSource(client, mock(TitleTagRepository.class), "");
+        var next = adapter.catalogPage("|9900");
+        assertThat(next.nextCursor()).isEqualTo("2019-12-31T23:59:59|0");
+        assertThat(next.stopReason()).isNull();
+        var boundary = adapter.catalogPage("2020-01-01T00:00:00|9900");
+        assertThat(boundary.nextCursor()).isNull();
+        assertThat(boundary.stopReason()).isEqualTo("SOURCE_LIMIT");
+    }
+
     @Test
     void sendsEveryFilterAndOrderBeforeTheLimitAndKeysTheCacheByQuery() {
         var client = mock(MangaDexClient.class);

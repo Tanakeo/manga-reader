@@ -8,6 +8,7 @@ import { problem } from '../api';
 import { TitleDetails } from './title-details';
 import { findPreviewTrigger, PreviewSelection, TitlePreviewState } from './title-preview-state';
 import { MorphFrame, TitleMorph } from './title-morph';
+import { Router } from '@angular/router';
 
 @Component({
   selector: 'app-title-preview',
@@ -21,6 +22,13 @@ export class TitlePreview {
   private readonly window = this.document.defaultView!;
   private readonly injector = inject(Injector);
   private readonly details = inject(TitleDetails);
+  private readonly router = inject(Router);
+  protected readonly chapterLanguage = computed(() => {
+    const params = this.router.parseUrl(this.displayed()?.returnTo.url ?? '/catalog').queryParamMap.getAll('chapterLanguage');
+    return params.length === 1 ? params[0] : '';
+  });
+  protected readonly availability = computed(() => this.chapterLanguage()
+    ? this.displayed()?.summary?.chapterAvailability : this.item()?.chapterAvailability);
   protected readonly language = inject(TitleLocale).language;
   protected readonly displayed = signal<PreviewSelection | undefined>(undefined);
   protected readonly moving = signal(true);

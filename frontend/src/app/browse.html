@@ -53,6 +53,7 @@
                 </button>
               </div>
               @if (errors().get(source.sourceId); as error) { <p class="feedback error source-error" role="alert">{{ error }}</p> }
+              <app-sync-progress [source]="source.sourceId"/>
             </li>
           } @empty {
             <li><app-state kind="empty" message="По вашему запросу источники не найдены.">

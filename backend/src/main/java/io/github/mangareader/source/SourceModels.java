@@ -52,7 +52,18 @@ public final class SourceModels {
 
     public record ChapterCount(int chapterCount) {}
 
-    public record SourceChapter(String id, BigDecimal number, String title, List<String> languages, int pageCount) {}
+    public record SourceChapter(String id, BigDecimal number, String title, List<String> languages, Integer pageCount,
+                                String logicalChapterId, String translationGroup, Instant publishedAt,
+                                String volume, String numberRaw) {
+        public SourceChapter(String id, BigDecimal number, String title, List<String> languages, Integer pageCount,
+                             String logicalChapterId, String translationGroup, Instant publishedAt) {
+            this(id,number,title,languages,pageCount,logicalChapterId,translationGroup,publishedAt,null,
+                    number == null ? null : number.toPlainString());
+        }
+        public SourceChapter(String id, BigDecimal number, String title, List<String> languages, Integer pageCount) {
+            this(id, number, title, languages, pageCount, id, null, null);
+        }
+    }
 
     public record Page(int index, String imageUrl) {}
 

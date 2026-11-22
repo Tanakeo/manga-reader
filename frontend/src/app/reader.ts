@@ -20,7 +20,7 @@ import { NavigationDock } from './navigation-dock';
     @if (failed()) {
       <div class="page-fallback" role="status">
         <svg class="icon" [lucideIcon]="imageOff" [size]="26" aria-hidden="true"/>
-        <p>Страница {{ index() + 1 }} не загрузилась. @if (offline()) { Проверьте загрузку главы. }</p>
+        <p>{{ imageIssue() || 'Изображение не загрузилось.' }} @if (offline()) { Проверьте загрузку главы. }</p>
         <div class="actions">
           <button class="button secondary" type="button" (click)="retry()">Повторить</button>
           @if (offline()) {
@@ -30,10 +30,12 @@ import { NavigationDock } from './navigation-dock';
           }
         </div>
       </div>
-    } @else {
-      <img [src]="url()" [alt]="'Страница ' + (index() + 1)"
+    } @else if (url(); as address) {
+      <img [src]="address" [alt]="'Страница ' + (index() + 1)"
         [class.image-waiting]="!loaded()" [attr.loading]="eager() || retries() ? 'eager' : 'lazy'"
         decoding="async" (load)="ready()" (error)="ready(true)">
+    } @else {
+      <div class="page-loading" role="status" [attr.aria-label]="'Загружаем страницу ' + (index() + 1)"></div>
     }
   `,
 })
@@ -49,12 +51,46 @@ export class PageImage {
   protected readonly failed = signal(false);
   protected readonly retries = signal(0);
   protected readonly imageOff = ImageOff;
-  protected readonly url = computed(() => {
-    if (!this.retries()) return this.src();
-    const url = new URL(this.src(), this.document.baseURI);
-    url.searchParams.set('_retry', String(Date.now()));
-    return url.href;
-  });
+  protected readonly url = signal<string | null>(null);
+  protected readonly imageIssue = signal('');
+  private readonly api = inject(Api);
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+  private readonly imageDestroy = inject(DestroyRef);
+  private readonly visible = signal(false);
+  readonly manifestChanged = output<void>();
+
+  constructor() {
+    afterNextRender(() => {
+      if (typeof IntersectionObserver === 'undefined') { this.visible.set(true); return; }
+      const observer = new IntersectionObserver(entries => {
+        if (entries.some(entry => entry.isIntersecting)) {
+          this.visible.set(true);
+          observer.disconnect();
+        }
+      }, {rootMargin: '600px'});
+      observer.observe(this.host.nativeElement);
+      this.imageDestroy.onDestroy(() => observer.disconnect());
+    });
+    effect(cleanup => {
+      const source = this.src();
+      this.retries();
+      if (!this.visible() && !this.eager()) return;
+      this.loaded.set(false);
+      this.failed.set(false);
+      this.url.set(null);
+      let objectUrl: string | undefined;
+      const request = this.api.image(source).subscribe({
+        next: blob => { objectUrl = URL.createObjectURL(blob); this.url.set(objectUrl); },
+        error: error => {
+          const issue = problem(error);
+          this.imageIssue.set(issue.detail);
+          this.ready(true);
+          if (issue.code === 'PAGE_MANIFEST_CHANGED') this.manifestChanged.emit();
+        },
+      });
+      cleanup(() => { request.unsubscribe(); if (objectUrl) URL.revokeObjectURL(objectUrl); });
+    });
+  }
 
   protected ready(failed = false) {
     this.failed.set(failed);

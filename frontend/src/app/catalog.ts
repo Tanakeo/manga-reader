@@ -1,9 +1,10 @@
-import { Component, computed, DestroyRef, inject, signal } from '@angular/core';
+import { afterNextRender, Component, computed, DestroyRef, inject, Injector, signal } from '@angular/core';
 import { rxResource, takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, NavigationStart, Router, RouterLink } from '@angular/router';
 import { LucideArrowUpRight as ArrowUpRight, LucideChevronDown as ChevronDown, LucideDynamicIcon } from '@lucide/angular';
 import { Api, CatalogQuery, problem, Tag, titleLink } from './api';
+import { CatalogFeed } from './catalog-feed';
 import { CatalogFacts } from './catalog-facts';
 import { catalogParams, catalogSorts, normalizeCatalog, readCatalog, tagLimit, tagName } from './catalog-query';
 import { Cover, State } from './common';
@@ -15,6 +16,7 @@ import { TitleDetails } from './shared/title-details';
 @Component({
   imports: [FormsModule, RouterLink, LucideDynamicIcon, Cover, State, CatalogFacts, LocalizedTitle, CommandSearch, TitlePreviewLink],
   templateUrl: './catalog.html',
+  providers: [CatalogFeed],
 })
 export class Catalog {
   private readonly api = inject(Api);
@@ -24,7 +26,7 @@ export class Catalog {
   private normalization?: ReturnType<typeof setTimeout>;
   protected readonly query = signal(readCatalog(this.route.snapshot.queryParamMap), {
     equal: (a, b) => a.sourceId === b.sourceId && a.q === b.q && a.sort === b.sort
-      && a.tagIds.join(',') === b.tagIds.join(','),
+      && a.tagIds.join(',') === b.tagIds.join(',') && a.chapterLanguages?.join(',') === b.chapterLanguages?.join(','),
   });
   protected readonly titleLanguage = inject(TitleLocale).language;
   protected readonly sourceId = computed(() => this.query().sourceId);
@@ -69,16 +71,31 @@ export class Catalog {
   protected readonly titleContext = computed(() => ({
     ...catalogParams(this.query(), 'catalogSource'), fromCatalog: '1',
   }));
-  protected readonly results = rxResource({
-    params: this.query,
-    stream: ({params}) => this.api.catalog(params),
-  });
+  protected readonly response = inject(CatalogFeed);
+  protected readonly loadingMore = this.response.loadingMore;
+  protected readonly moreError = this.response.moreError;
+  protected readonly currentPage = computed(() => this.response.data()?.page);
+  protected readonly results = {
+    hasValue: () => this.response.hasValue(),
+    isLoading: () => this.response.isLoading(),
+    error: () => this.response.error(),
+    reload: () => this.response.reload(),
+    value: computed(() => this.response.data()?.items ?? []),
+  };
+  protected loadMore() { this.response.more(); }
+  protected sourceName(id: string) {
+    return this.sources.hasValue() ? this.sources.value().find(item => item.sourceId === id)?.sourceName ?? id : id;
+  }
+
+  protected setChapterLanguage(language: string) {
+    this.apply({...this.query(), chapterLanguages: language ? [language] : []});
+  }
 
   protected readonly featured = computed(() => {
     const results = this.results;
     if (!results.hasValue() || results.value().length !== 1) return undefined;
     const item = results.value()[0];
-    return item.sourceId === 'mangadex' ? undefined : item;
+    return item.sourceId === 'peppercarrot' ? item : undefined;
   });
   protected readonly detail = rxResource({
     params: () => this.featured(),
@@ -86,24 +103,33 @@ export class Catalog {
   });
 
   constructor() {
+    const injector = inject(Injector);
+    let first = true;
     this.route.queryParamMap.pipe(takeUntilDestroyed()).subscribe(params => {
       clearTimeout(this.normalization);
       const query = readCatalog(params);
       this.query.set(query);
+      const restore = first || this.router.getCurrentNavigation()?.trigger === 'popstate';
+      const scroll = this.response.activate(query, restore);
+      first = false;
+      if (scroll !== undefined) afterNextRender(() => window.scrollTo({top: scroll, behavior: 'instant'}), {injector});
       if (params.getAll('sourceId').join(',') !== query.sourceId ||
           params.getAll('q').join(',') !== query.q || params.getAll('sort').join(',') !== query.sort ||
           params.getAll('tagId').join(',') !== query.tagIds.join(',') ||
-          ['sourceId', 'q', 'sort', 'tagId'].some(key => params.has(key) && params.get(key) === '')) {
+          params.getAll('chapterLanguage').join(',') !== query.chapterLanguages?.join(',') ||
+          ['sourceId', 'q', 'sort', 'tagId', 'chapterLanguage'].some(key => params.has(key) && params.get(key) === '')) {
         this.normalization = setTimeout(() => this.apply(query, true));
       }
     });
     this.router.events.pipe(takeUntilDestroyed()).subscribe(event => {
       if (event instanceof NavigationStart) {
         clearTimeout(this.normalization);
+        this.response.save();
       }
     });
     inject(DestroyRef).onDestroy(() => {
       clearTimeout(this.normalization);
+      this.response.destroy();
     });
   }
 
@@ -113,11 +139,11 @@ export class Catalog {
   }
 
   protected reset() {
-    this.apply({sourceId: this.sourceId(), q: '', tagIds: [], sort: ''});
+    this.apply({sourceId: this.sourceId(), q: '', tagIds: [], sort: '', chapterLanguages: []});
   }
 
   protected setSource(sourceId: string) {
-    this.apply({sourceId, q: this.query().q, tagIds: [], sort: ''});
+    this.apply({sourceId, q: this.query().q, tagIds: [], sort: '', chapterLanguages: this.query().chapterLanguages});
   }
 
   protected setSearch(q: string) {

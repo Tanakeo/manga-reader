@@ -26,6 +26,8 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 @RestController
 @RequestMapping("/api/v1")
@@ -38,20 +40,34 @@ public class CatalogController {
     private final SourceConnectionService connections;
     private final TitleRepository titles;
     private final TitleTagRepository titleTags;
+    private final LocalCatalogService localCatalog;
+    private final CatalogSyncService sync;
+    private final ChapterListingService chapterListing;
+    private final JsonMapper json;
+    private final ReaderService reader;
 
     public CatalogController(MangaSourceRegistry registry, SourceConnectionService connections, TitleRepository titles,
-                             TitleTagRepository titleTags) {
+                             TitleTagRepository titleTags, LocalCatalogService localCatalog, CatalogSyncService sync,
+                             ChapterListingService chapterListing, JsonMapper json, ReaderService reader) {
         this.registry = registry;
         this.connections = connections;
         this.titles = titles;
         this.titleTags = titleTags;
+        this.localCatalog = localCatalog;
+        this.sync = sync;
+        this.chapterListing = chapterListing;
+        this.json = json;
+        this.reader = reader;
     }
 
     @GetMapping("/catalog")
-    public Items<SourceTitleSummary> catalog(@RequestParam(required = false) String sourceId,
+    public JsonNode catalog(@RequestParam(required = false) String sourceId,
                                              @RequestParam(defaultValue = "") String q,
                                              @RequestParam(name = "tagId", required = false) List<String> tagIds,
-                                             @RequestParam(defaultValue = "") String sort) {
+                                             @RequestParam(defaultValue = "") String sort,
+                                             @RequestParam(name = "chapterLanguage", required = false) List<String> languages,
+                                             @RequestParam(defaultValue = "24") int limit,
+                                             @RequestParam(required = false) String cursor) {
         if (q.length() > 120) {
             throw ApiException.validation(List.of(new FieldError("q", "TOO_LONG", "Введите не более 120 символов.")));
         }
@@ -75,25 +91,12 @@ public class CatalogController {
         String query = q.strip();
         boolean filtered = !tags.isEmpty() || !order.isEmpty();
         if (filtered && sourceId == null) throw ApiException.catalogSourceRequired();
-        if (filtered && ((!tags.isEmpty() && !sources.getFirst().supportsTags())
-                || (!order.isEmpty() && !sources.getFirst().catalogSorts().contains(order)))) {
+        if (!tags.isEmpty() && !sources.getFirst().supportsTags()) {
             throw ApiException.problem(HttpStatus.UNPROCESSABLE_CONTENT, "CATALOG_OPTIONS_UNSUPPORTED",
                     "Источник или запрос не поддерживает выбранные фильтры и сортировку.");
         }
-        var found = new ArrayList<SourceTitle>();
-        ApiException sourceFailure = null;
-        boolean anySourceResponded = false;
-        for (MangaSource source : sources) {
-            try {
-                found.addAll(filtered ? source.searchTitles(query, tags, order) : source.searchTitles(query));
-                anySourceResponded = true;
-            } catch (ApiException exception) {
-                if (sourceId != null || !exception.status().is5xxServerError()) throw exception;
-                if (sourceFailure == null) sourceFailure = exception;
-            }
-        }
-        if (!anySourceResponded && sourceFailure != null) throw sourceFailure;
-        return new Items<>(titles.syncCatalog(found).stream().map(SourceTitle::summary).toList());
+        return localCatalog.catalog(sourceId, query, tags, order,
+                languages == null ? List.of() : languages.stream().distinct().sorted().toList(), limit, cursor);
     }
 
     @GetMapping("/sources/{sourceId}/tags")
@@ -103,36 +106,70 @@ public class CatalogController {
             throw ApiException.problem(HttpStatus.UNPROCESSABLE_CONTENT, "CATALOG_OPTIONS_UNSUPPORTED",
                     "Источник не поддерживает теги.");
         }
-        return new Items<>(adapter.catalogTags());
+        return new Items<>(titleTags.dictionary(sourceId));
     }
 
     @GetMapping(TITLE_PATH)
-    public SourceTitle title(@PathVariable String sourceId, @PathVariable String externalTitleId) {
+    public JsonNode title(@PathVariable String sourceId, @PathVariable String externalTitleId) {
         checkExternalId("externalTitleId", externalTitleId);
-        var title = source(sourceId).getTitle(externalTitleId);
+        ApiException metadataError = null;
+        SourceTitle title;
+        try { title = source(sourceId).getTitle(externalTitleId); }
+        catch (ApiException exception) {
+            title = titles.find(sourceId, externalTitleId).orElseThrow(() -> exception);
+            metadataError = exception;
+        }
         var saved = titles.sync(List.of(title)).getFirst();
-        return saved.withTags(titleTags.forTitle(sourceId, saved.externalTitleId()));
+        var result = (tools.jackson.databind.node.ObjectNode) json.valueToTree(
+                saved.withTags(titleTags.forTitle(sourceId, saved.externalTitleId())));
+        result.set("chapterAvailability", sync.availability(sync.titleId(sourceId, externalTitleId),
+                source(sourceId).supportedLanguages()));
+        if (metadataError != null) result.set("metadataError", json.valueToTree(
+                java.util.Map.of("code", metadataError.code(), "detail", metadataError.getMessage(), "stage", "TITLE")));
+        return result;
     }
 
     @GetMapping(TITLE_PATH + "/chapter-count")
-    public ChapterCount chapterCount(@PathVariable String sourceId, @PathVariable String externalTitleId) {
+    public JsonNode chapterCount(@PathVariable String sourceId, @PathVariable String externalTitleId) {
         checkExternalId("externalTitleId", externalTitleId);
-        return new ChapterCount(source(sourceId).chapterCount(externalTitleId));
+        chapterListing.ensureTitle(sourceId, externalTitleId);
+        var availability = sync.availability(sync.titleId(sourceId, externalTitleId), source(sourceId).supportedLanguages());
+        var result = json.createObjectNode();
+        result.set("chapterCount", availability.path("chapterCount"));
+        result.set("availability", availability);
+        return result;
     }
 
     @GetMapping(TITLE_PATH + "/chapters")
-    public Items<SourceChapter> chapters(@PathVariable String sourceId, @PathVariable String externalTitleId) {
+    public JsonNode chapters(@PathVariable String sourceId, @PathVariable String externalTitleId,
+                             @RequestParam(required = false) String language,
+                             @RequestParam(defaultValue = "100") int limit,
+                             @RequestParam(required = false) String cursor) {
         checkExternalId("externalTitleId", externalTitleId);
-        return new Items<>(source(sourceId).listChapters(externalTitleId));
+        return chapterListing.listing(sourceId, externalTitleId, language, limit, cursor);
     }
 
     @GetMapping(TITLE_PATH + "/chapters/{chapterId}/pages")
-    public ChapterPages pages(@PathVariable String sourceId, @PathVariable String externalTitleId,
-                              @PathVariable String chapterId, @RequestParam(required = false) String language) {
+    public JsonNode pages(@PathVariable String sourceId, @PathVariable String externalTitleId,
+                              @PathVariable String chapterId, @RequestParam(required = false) String language,
+                              @RequestParam(defaultValue = "false") boolean refresh) {
         checkExternalId("externalTitleId", externalTitleId);
         checkExternalId("chapterId", chapterId);
         ApiInputs.requireMatch("language", language, ApiInputs.LANGUAGE, 32);
-        return source(sourceId).getPages(externalTitleId, chapterId, language);
+        return reader.pages(sourceId, externalTitleId, chapterId, language, refresh);
+    }
+
+    @GetMapping(TITLE_PATH + "/chapters/{chapterId}/images/{index}")
+    public org.springframework.http.ResponseEntity<byte[]> image(
+            @PathVariable String sourceId, @PathVariable String externalTitleId, @PathVariable String chapterId,
+            @PathVariable int index, @RequestParam String language,
+            @RequestParam(required = false) String manifestVersion) {
+        checkExternalId("externalTitleId", externalTitleId);
+        checkExternalId("chapterId", chapterId);
+        ApiInputs.requireMatch("language", language, ApiInputs.LANGUAGE, 32);
+        var image = reader.image(sourceId, externalTitleId, chapterId, language, index, manifestVersion);
+        return org.springframework.http.ResponseEntity.ok().cacheControl(org.springframework.http.CacheControl.noStore())
+                .header("X-Content-Type-Options", "nosniff").contentType(image.type()).body(image.bytes());
     }
 
     private MangaSource source(String id) {

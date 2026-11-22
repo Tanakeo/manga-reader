@@ -1,0 +1,22 @@
+@if (state.hasValue()) {
+  @let status = state.value();
+  <p class="muted" role="status">
+    Собрано {{ status.coverage.collectedTitleCount }} ·
+    Проверено {{ status.coverage.verifiedTitleCount }} · Скрыто без глав {{ status.coverage.hiddenTitleCount }}
+  </p>
+  @if (status.current; as run) {
+    <p class="muted">{{ run.state === 'PAUSED' ? 'Синхронизация приостановлена' :
+      run.phase === 'CHAPTER_CHECKS' ? 'Проверяем доступность глав' : 'Собираем каталог' }}
+      · {{ run.pagesCommitted }} страниц · {{ run.uniqueTitlesSeen }} тайтлов</p>
+    @if (run.error) { <p class="feedback error">{{ run.error.detail }}</p> }
+    <button class="button secondary compact" type="button" [disabled]="busy()" (click)="change(run)">
+      {{ run.state === 'PAUSED' ? 'Продолжить' : 'Приостановить' }}
+    </button>
+  } @else {
+    @if (status.lastFinished?.error; as error) { <p class="feedback error">{{ error.detail }}</p> }
+    <button class="button secondary compact" type="button" [disabled]="busy()" (click)="start()">
+      {{ busy() ? 'Запускаем…' : 'Обновить каталог источника' }}
+    </button>
+  }
+}
+@if (error()) { <p class="feedback error" role="alert">{{ error() }}</p> }

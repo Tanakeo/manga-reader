@@ -21,6 +21,7 @@ export function normalizeCatalog(query: CatalogQuery): CatalogQuery {
     q,
     tagIds: sourceId ? [...new Set(tags)].slice(0, tagLimit).sort() : [],
     sort: sourceId && Object.hasOwn(catalogSorts, query.sort) && (query.sort !== 'relevance' || q) ? query.sort : '',
+    chapterLanguages: [...new Set(query.chapterLanguages ?? [])].filter(language => ['ru', 'en'].includes(language)).sort(),
   };
 }
 
@@ -30,6 +31,7 @@ export function readCatalog(params: ParamMap, sourceKey = 'sourceId') {
     q: params.get('q') ?? '',
     tagIds: params.getAll('tagId'),
     sort: params.get('sort') ?? '',
+    chapterLanguages: params.getAll('chapterLanguage'),
   });
 }
 
@@ -39,6 +41,7 @@ export function catalogParams(query: CatalogQuery, sourceKey = 'sourceId') {
     q: query.q || null,
     tagId: query.tagIds.length ? query.tagIds : null,
     sort: query.sort || null,
+    chapterLanguage: query.chapterLanguages?.length ? query.chapterLanguages : null,
   };
 }
 

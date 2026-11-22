@@ -11,6 +11,8 @@ import io.github.mangareader.error.ApiException;
 import io.github.mangareader.error.ApiInputs;
 import io.github.mangareader.source.MangaSource;
 import io.github.mangareader.source.PublicSourceClient;
+import io.github.mangareader.source.SourceScan.CatalogPage;
+import io.github.mangareader.source.SourceScan.ChapterResult;
 import io.github.mangareader.source.SourceModels.Attribution;
 import io.github.mangareader.source.SourceModels.ChapterPages;
 import io.github.mangareader.source.SourceModels.Page;
@@ -33,8 +35,8 @@ import tools.jackson.databind.JsonNode;
 
 @Component
 public class MangaKakalotSource implements MangaSource {
-    private static final String ORIGIN = "https://www.kakamanga.com";
-    private static final String[] IMAGE_DOMAINS = {"2xstorage.com", "kakamanga.com"};
+    private static final String ORIGIN = "https://www.katamanga.com";
+    private static final String[] IMAGE_DOMAINS = {"2xstorage.com", "kakamanga.com", "katamanga.com"};
     private static final String CARDS = ".list-comic-item-wrap, .list-truyen-item-wrap, .panel_story_list .story_item";
     private static final List<String> LANGUAGES = List.of("en");
     private static final Pattern TITLE_PATH = Pattern.compile("/manga/([A-Za-z0-9][A-Za-z0-9._~-]{0,199})/?");
@@ -57,6 +59,28 @@ public class MangaKakalotSource implements MangaSource {
     @Override public String id() { return "mangakakalot"; }
     @Override public String displayName() { return "MangaKakalot"; }
     @Override public String websiteUrl() { return ORIGIN; }
+    @Override public List<String> supportedLanguages() { return LANGUAGES; }
+    @Override public List<String> imageDomains() { return List.of(IMAGE_DOMAINS); }
+
+    @Override
+    public CatalogPage catalogPage(String cursor) {
+        int page = cursor == null ? 1 : Integer.parseInt(cursor);
+        var uri = url(ORIGIN, "manga-list", "hot-manga").queryParam("page", page).build().toUri();
+        var document = client.html(uri, null);
+        var items = parseCatalog(document);
+        if (items.isEmpty()) throw badResponse("Missing MangaKakalot catalog cards");
+        boolean next = document.select("a[href]").stream()
+                .anyMatch(link -> link.attr("href").equals("/manga-list/hot-manga?page=" + (page + 1)));
+        return new CatalogPage(items, next ? Integer.toString(page + 1) : null, null,
+                next ? null : "EXHAUSTED", "page=" + page + ", rows=" + items.size() + ", next=" + next);
+    }
+
+    @Override
+    public ChapterResult scanChapters(String id) {
+        chapters.invalidate(id);
+        var result = listChapters(id);
+        return new ChapterResult(result, true, result.size(), 0, "EXHAUSTED");
+    }
 
     @Override
     public List<SourceTitle> searchTitles(String query) {
@@ -90,10 +114,9 @@ public class MangaKakalotSource implements MangaSource {
 
     private List<SourceTitle> parseCatalog(Document document) {
         var items = new LinkedHashMap<String, SourceTitle>();
-        for (Element card : document.select(CARDS)) {
-            Element link = card.selectFirst("h3 a[href], a.name[href], a[data-id][href]");
-            if (link == null) continue;
-            URI href = httpsUrl(link.absUrl("href"), "kakamanga.com");
+        for (Element link : document.select("h3 a[href]")) {
+            Element card = link.parent().parent();
+            URI href = httpsUrl(link.absUrl("href"), "kakamanga.com", "katamanga.com");
             if (href == null) continue;
             var match = TITLE_PATH.matcher(href.getPath());
             String title = link.text().isBlank() ? link.attr("title") : link.text();
@@ -112,13 +135,13 @@ public class MangaKakalotSource implements MangaSource {
         return titles.get(id, key -> {
             URI uri = url(ORIGIN, "manga", key).build().encode().toUri();
             Document document = client.html(uri, MangaKakalotSource::titleMissing);
-            var heading = document.selectFirst(".manga-info-top h1, .panel-story-info h1");
+            var heading = document.selectFirst("h1");
             if (heading == null || heading.text().isBlank()) throw badResponse("Title name missing");
-            var author = document.selectFirst(".manga-info-top li:matchesOwn((?i)^author), td:containsOwn(author) + td");
-            var cover = document.selectFirst(".manga-info-pic img, .info-image img");
+            var author = document.selectFirst(".manga-info-top li:matchesOwn((?i)^author), td:containsOwn(author) + td, span:matchesOwn(^Author$) + span");
+            var cover = document.selectFirst(".manga-info-pic img, .info-image img, img[src*=/thumb/]");
             var description = document.selectFirst("#contentBox, #noidungm, #panel-story-info-description");
             if (description != null) description.select("h2, script").remove();
-            var status = document.selectFirst(".manga-info-top li:matchesOwn((?i)^status), td:containsOwn(status) + td");
+            var status = document.selectFirst(".manga-info-top li:matchesOwn((?i)^status), td:containsOwn(status) + td, span:matchesOwn(^Status$) + span");
             String authorName = author == null ? null
                     : author.text().replaceFirst("(?i)^authors?\\s*(?:\\(s\\))?\\s*:\\s*", "");
             String publicationStatus = status == null ? null
@@ -135,15 +158,26 @@ public class MangaKakalotSource implements MangaSource {
             JsonNode response = client.json(uri, null, MangaKakalotSource::titleMissing);
             JsonNode items = response.path("data").path("chapters");
             if (!response.path("success").asBoolean() || !items.isArray()) throw badResponse("Missing chapters");
+            JsonNode pagination = response.path("data").path("pagination");
+            if (!pagination.path("total").isIntegralNumber() || pagination.path("offset").asInt(-1) != 0
+                    || pagination.path("limit").asInt(0) != -1
+                    || pagination.path("total").asLong() != items.size()) {
+                throw badResponse("Incomplete MangaKakalot chapter pagination");
+            }
             var ordered = new LinkedHashMap<String, SourceChapter>();
             for (JsonNode item : items) {
                 String slug = text(item.path("chapter_slug"));
                 String name = text(item.path("chapter_name"));
-                if (slug == null || name == null || !ApiInputs.EXTERNAL_ID.matcher(slug).matches()) continue;
+                if (slug == null || name == null || !ApiInputs.EXTERNAL_ID.matcher(slug).matches()) {
+                    throw badResponse("Invalid MangaKakalot chapter");
+                }
                 JsonNode number = item.path("chapter_num");
+                String published = text(item.path("updated_at"));
                 ordered.putIfAbsent(slug, new SourceChapter(slug, number.isNumber() ? number.decimalValue() : null,
-                        name, LANGUAGES, 0));
+                        name, LANGUAGES, null, slug, null,
+                        PublicSourceClient.instant(published)));
             }
+            if (ordered.size() != items.size()) throw badResponse("Duplicate MangaKakalot chapter identity");
             return ordered.values().stream()
                     .sorted(Comparator.comparing(SourceChapter::number, Comparator.nullsLast(BigDecimal::compareTo)))
                     .toList();
@@ -183,9 +217,9 @@ public class MangaKakalotSource implements MangaSource {
             }
             return List.copyOf(images);
         }
-        for (Element img : document.select(".container-chapter-reader > img")) {
+        for (Element img : document.select("img[src]")) {
             URI image = httpsUrl(img.absUrl(img.hasAttr("data-src") ? "data-src" : "src"), IMAGE_DOMAINS);
-            if (image == null) throw badResponse("Invalid chapter image");
+            if (image == null || image.getPath().contains("/thumb/") || image.getPath().endsWith(".svg")) continue;
             images.add(new Page(images.size(), image.toString()));
         }
         if (images.isEmpty()) throw badResponse("Chapter contains no pages");
