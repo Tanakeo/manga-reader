@@ -61,10 +61,9 @@ public class DownloadService {
     @PostConstruct
     void recover() {
         jdbc.sql("""
-                UPDATE chapter_downloads SET status = 'FAILED', error_code = 'DOWNLOAD_INTERRUPTED',
-                    error = 'Загрузка прервалась. Повторите её.', updated_at = now()
-                WHERE status = 'DOWNLOADING' RETURNING id
-                """).query(UUID.class).list().forEach(this::clearFailed);
+                UPDATE chapter_downloads SET status='QUEUED',error_code=NULL,error=NULL,updated_at=now()
+                WHERE status='DOWNLOADING'
+                """).update();
         var legacy = jdbc.sql("""
                 SELECT * FROM chapter_downloads d WHERE status = 'READY'
                 AND NOT EXISTS (SELECT 1 FROM download_pages p WHERE p.download_id = d.id)
@@ -89,13 +88,13 @@ public class DownloadService {
         }
         var query = jdbc.sql("SELECT * FROM chapter_downloads "
                 + (scoped ? "WHERE source_id = :source AND external_title_id = :title " : "")
-                + "ORDER BY updated_at DESC, id");
+                + "ORDER BY priority DESC, updated_at DESC, id");
         if (scoped) query.param("source", sourceId).param("title", externalTitleId);
         return new Downloads(!scoped || (source.id().equals(sourceId) && "pepper-and-carrot".equals(externalTitleId)),
                 query.query((row, index) -> read(row).download()).list());
     }
 
-    Download create(Request request) {
+    public Download create(Request request) {
         var adapter = sources.require(ApiInputs.requireSourceId(request.sourceId()));
         ApiInputs.requireMatch("externalTitleId", request.externalTitleId(), ApiInputs.EXTERNAL_ID, 200);
         ApiInputs.requireMatch("chapterId", request.chapterId(), ApiInputs.EXTERNAL_ID, 200);
@@ -131,7 +130,7 @@ public class DownloadService {
     Download retry(UUID id) {
         return jdbc.sql("""
                 UPDATE chapter_downloads SET status = 'QUEUED', error = NULL, error_code = NULL,
-                    pages_done = 0, total_pages = NULL, updated_at = now()
+                    updated_at = now()
                 WHERE id = :id AND status = 'FAILED' RETURNING *
                 """).param("id", id).query((row, index) -> read(row).download()).optional().orElseGet(() -> {
                     Download download = get(id);
@@ -143,7 +142,7 @@ public class DownloadService {
     Optional<Download> delete(UUID id) {
         var deleting = jdbc.sql("""
                 UPDATE chapter_downloads SET status = 'DELETING', error = NULL, error_code = NULL, updated_at = now()
-                WHERE id = :id AND status IN ('READY', 'FAILED', 'DELETING') RETURNING *
+                WHERE id = :id AND status IN ('READY', 'FAILED', 'DELETING','PAUSED','QUEUED') RETURNING *
                 """).param("id", id).query((row, index) -> read(row).download()).optional();
         if (deleting.isEmpty() && find(id).isPresent()) {
             throw problem(HttpStatus.CONFLICT, "DOWNLOAD_IN_PROGRESS", "Дождитесь завершения загрузки.");
@@ -204,7 +203,7 @@ public class DownloadService {
                 UPDATE chapter_downloads SET status = 'DOWNLOADING', attempt_no = attempt_no + 1,
                     updated_at = now()
                 WHERE id = (SELECT id FROM chapter_downloads WHERE status = 'QUEUED'
-                            ORDER BY created_at, id LIMIT 1 FOR UPDATE SKIP LOCKED)
+                            ORDER BY priority DESC,created_at,id LIMIT 1 FOR UPDATE SKIP LOCKED)
                 RETURNING *
                 """).query((row, index) -> read(row)).optional().ifPresent(this::download);
     }
@@ -214,27 +213,35 @@ public class DownloadService {
         UUID id = job.id();
         int attempt = stored.attempt();
         try {
-            files.clear(id);
-            jdbc.sql("DELETE FROM download_pages WHERE download_id = :id").param("id", id).update();
             ChapterPages chapter = source.getPages(job.title().externalTitleId(), job.chapterId(), job.language());
+            String key = json.writeValueAsString(chapter.pages().stream().map(Page::imageUrl).toList());
+            if (!key.equals(stored.manifestKey())) {
+                files.clear(id);
+                jdbc.sql("DELETE FROM download_pages WHERE download_id=:id").param("id",id).update();
+            } else files.prepare(id);
             jdbc.sql("""
                     UPDATE chapter_downloads SET total_pages = :total, chapter_title = :title,
-                        chapter_number = :number, updated_at = now()
+                        chapter_number=:number,manifest_key=:key,pages_done=0,updated_at=now()
                     WHERE id = :id AND attempt_no = :attempt
                     """).param("total", chapter.pageCount()).param("title", chapter.title())
                     .param("number", Integer.parseInt(chapter.chapterId().substring(2, chapter.chapterId().indexOf('_'))))
-                    .param("id", id).param("attempt", attempt).update();
+                    .param("id",id).param("attempt",attempt).param("key",key).update();
             var pages = new ArrayList<Page>();
-            var storedPages = new ArrayList<PageFile>();
+            var checkpoints = jdbc.sql("SELECT * FROM download_pages WHERE download_id=:id")
+                    .param("id",id).query((row,n) -> new PageFile(row.getInt("page_index"),row.getString("storage_key"),
+                            row.getString("mime_type"),row.getLong("size_bytes"),row.getString("sha256"))).list()
+                    .stream().collect(java.util.stream.Collectors.toMap(PageFile::index,java.util.function.Function.identity()));
             long totalBytes = 0;
             for (Page page : chapter.pages()) {
                 if (page.index() != pages.size()) throw new IOException("Non-contiguous chapter pages");
-                PageFile file = files.fetch(id, page.index(), page.imageUrl());
+                if (!isWorking(id,attempt)) return;
+                PageFile file = checkpoints.get(page.index());
+                if (file == null || !files.verified(id,file)) file = files.fetch(id,page.index(),page.imageUrl());
                 totalBytes += file.sizeBytes();
                 if (totalBytes > MAX_CHAPTER_BYTES) {
                     throw problem(HttpStatus.UNPROCESSABLE_CONTENT, "DOWNLOAD_TOO_LARGE", "Глава превышает лимит размера.");
                 }
-                storedPages.add(file);
+                savePages(id,List.of(file));
                 pages.add(new Page(page.index(), imageUrl(id, page.index())));
                 jdbc.sql("UPDATE chapter_downloads SET pages_done = :done, updated_at = now() WHERE id = :id AND attempt_no = :attempt")
                         .param("done", pages.size()).param("id", id).param("attempt", attempt).update();
@@ -242,6 +249,7 @@ public class DownloadService {
             if (pages.isEmpty() || pages.size() != chapter.pageCount()) throw new IOException("Incomplete chapter");
             var local = new ChapterPages(chapter.chapterId(), chapter.title(), chapter.language(), chapter.pageCount(),
                     null, null, chapter.attribution(), List.copyOf(pages));
+            if (!isWorking(id,attempt)) return;
             files.publish(id);
             writes.executeWithoutResult(transaction -> {
                 int updated = jdbc.sql("""
@@ -251,17 +259,17 @@ public class DownloadService {
                         """).param("title", json.writeValueAsString(withCover(job.title(), pages.getFirst().imageUrl())))
                         .param("chapter", json.writeValueAsString(local)).param("id", id).param("attempt", attempt).update();
                 if (updated == 0) throw new IllegalStateException("Download attempt changed");
-                savePages(id, storedPages);
+
             });
         } catch (IOException | RuntimeException error) {
             String code = error instanceof ApiException api ? api.code() : "DOWNLOAD_FAILED";
             String message = error instanceof ApiException api ? api.getMessage() : "Не удалось сохранить файлы главы.";
             if (!(error instanceof ApiException)) LOG.warn("Could not save download {}", id, error);
-            int failed = jdbc.sql("""
+            jdbc.sql("""
                     UPDATE chapter_downloads SET status = 'FAILED', error_code = :code, error = :detail, updated_at = now()
                     WHERE id = :id AND attempt_no = :attempt AND status = 'DOWNLOADING'
                     """).param("code", code).param("detail", message).param("id", id).param("attempt", attempt).update();
-            if (failed == 1) clearFailed(id);
+
         }
     }
 
@@ -270,6 +278,8 @@ public class DownloadService {
             jdbc.sql("""
                     INSERT INTO download_pages (download_id, page_index, storage_key, mime_type, size_bytes, sha256)
                     VALUES (:id, :index, :key, :mime, :bytes, :hash)
+                    ON CONFLICT(download_id,page_index) DO UPDATE SET storage_key=excluded.storage_key,
+                        mime_type=excluded.mime_type,size_bytes=excluded.size_bytes,sha256=excluded.sha256
                     """).param("id", id).param("index", page.index()).param("key", page.storageKey())
                     .param("mime", page.mimeType()).param("bytes", page.sizeBytes()).param("hash", page.sha256()).update();
         }
@@ -319,7 +329,7 @@ public class DownloadService {
                 row.getTimestamp("updated_at").toInstant());
         String chapter = row.getString("chapter_data");
         return new Stored(download, chapter == null ? null : json.readValue(chapter, ChapterPages.class),
-                row.getInt("attempt_no"));
+                row.getInt("attempt_no"),row.getString("manifest_key"));
     }
 
     private void markMissing(UUID id, int attempt) {
@@ -330,12 +340,20 @@ public class DownloadService {
                 """).param("id", id).param("attempt", attempt).update();
     }
 
-    private void clearFailed(UUID id) {
-        try {
-            files.clear(id);
-        } catch (IOException error) {
-            LOG.warn("Could not clean attempt {}", id, error);
-        }
+    Download control(UUID id, String action) {
+        String change = switch (action) {
+            case "pause" -> "status='PAUSED', updated_at=now() WHERE id=:id AND status IN ('QUEUED','DOWNLOADING')";
+            case "resume" -> "status='QUEUED', updated_at=now() WHERE id=:id AND status='PAUSED'";
+            case "prioritize" -> "priority=priority+1 WHERE id=:id AND status IN ('PAUSED','QUEUED') AND priority<1000000";
+            default -> throw problem(HttpStatus.BAD_REQUEST,"DOWNLOAD_ACTION_INVALID","Неизвестное действие очереди.");
+        };
+        return jdbc.sql("UPDATE chapter_downloads SET " + change + " RETURNING *").param("id",id)
+                .query((row,n) -> read(row).download()).optional().orElseGet(() -> get(id));
+    }
+
+    private boolean isWorking(UUID id,int attempt) {
+        return jdbc.sql("SELECT EXISTS(SELECT 1 FROM chapter_downloads WHERE id=:id AND attempt_no=:attempt AND status='DOWNLOADING')")
+                .param("id",id).param("attempt",attempt).query(Boolean.class).single();
     }
 
     private static ApiException missingFile() {
@@ -360,5 +378,5 @@ public class DownloadService {
                 title.author(), coverUrl, title.titleRu(), title.titleEn(), title.publicationStatus(), title.releaseYear());
     }
 
-    private record Stored(Download download, ChapterPages chapter, int attempt) {}
+    private record Stored(Download download, ChapterPages chapter, int attempt, String manifestKey) {}
 }

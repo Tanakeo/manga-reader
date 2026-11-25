@@ -4,15 +4,17 @@ import { LucideDynamicIcon, LucideX, LucideArrowUpRight } from '@lucide/angular'
 import { Cover } from '../common';
 import { CatalogFacts } from '../catalog-facts';
 import { LocalizedTitle, TitleLocale } from '../title-locale';
-import { problem } from '../api';
+import { Api, WorkSource, problem } from '../api';
 import { TitleDetails } from './title-details';
 import { findPreviewTrigger, PreviewSelection, TitlePreviewState } from './title-preview-state';
 import { MorphFrame, TitleMorph } from './title-morph';
 import { Router } from '@angular/router';
+import { RouterLink } from '@angular/router';
+import { WorkFacts } from '../work-facts';
 
 @Component({
   selector: 'app-title-preview',
-  imports: [Cover, CatalogFacts, LocalizedTitle, LucideDynamicIcon],
+  imports: [Cover, CatalogFacts, LocalizedTitle, LucideDynamicIcon, RouterLink, WorkFacts],
   templateUrl: './title-preview.html',
   styleUrl: './title-preview.css',
 })
@@ -23,6 +25,27 @@ export class TitlePreview {
   private readonly injector = inject(Injector);
   private readonly details = inject(TitleDetails);
   private readonly router = inject(Router);
+  private readonly api=inject(Api);
+  protected readonly selectingSource=signal(false);
+  protected readonly sourceIssue=signal('');
+
+  protected chooseSource(event:MouseEvent,source:WorkSource) {
+    if(event.button || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey)return;
+    event.preventDefault();
+    const item=this.item();
+    if(!item?.workId || this.selectingSource())return;
+    const language=this.chapterLanguage();
+    if(language && !source.supportedLanguages.includes(language)) {
+      this.sourceIssue.set('У этого источника доступны языки: '+source.supportedLanguages.join(', ')+'. Выберите язык на странице произведения.');
+      return;
+    }
+    this.selectingSource.set(true);this.sourceIssue.set('');
+    this.api.preferSource(item.workId,source.titleId,language || null,
+      this.detail.hasValue()?this.detail.value().preference?.version ?? 0:0).subscribe({
+      next:()=>{this.selectingSource.set(false);this.state.goToSource(source);},
+      error:error=>{this.selectingSource.set(false);this.sourceIssue.set(problem(error).detail);this.detail.reload();},
+    });
+  }
   protected readonly chapterLanguage = computed(() => {
     const params = this.router.parseUrl(this.displayed()?.returnTo.url ?? '/catalog').queryParamMap.getAll('chapterLanguage');
     return params.length === 1 ? params[0] : '';

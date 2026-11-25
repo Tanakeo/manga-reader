@@ -27,11 +27,30 @@ class PublicSourcesTest {
     private final PublicSourceClient client = spy(new PublicSourceClient(json));
 
     @Test
+    void mangaGokuReaderExcludesLogoAndUsesOriginReferer() {
+        var source=new MangaKakalotSource(client);
+        doReturn(json.readTree("""
+                {"success":true,"data":{"chapters":[{"chapter_slug":"chapter-1","chapter_name":"First","chapter_num":1}],
+                "pagination":{"total":1,"limit":-1,"offset":0}}}
+                """)).when(client).json(eq(URI.create("https://www.mangagoku.com/api/manga/sample/chapters?limit=-1")),isNull(),notNull());
+        doReturn(Jsoup.parse("<h1>Sample</h1>")).when(client).html(eq(URI.create("https://www.mangagoku.com/manga/sample")),notNull());
+        doReturn(Jsoup.parse("""
+                <img src="https://www.mangagoku.com/images/goku/logo-header.webp">
+                <div data-page="0"><img src="https://imgs-2.2xstorage.com/sample/1/0.webp"></div>
+                <div data-page="1"><img src="https://imgs-2.2xstorage.com/sample/1/1.webp"></div>
+                """)).when(client).html(eq(URI.create("https://www.mangagoku.com/manga/sample/chapter-1")),notNull());
+        var pages=source.getPages("sample","chapter-1","en");
+        assertThat(pages.pageCount()).isEqualTo(2);
+        assertThat(pages.pages()).extracting(Page::imageUrl).allMatch(url -> url.contains("/sample/1/"));
+        assertThat(source.imageReferer(pages.attribution().sourceUrl())).isEqualTo("https://www.mangagoku.com/");
+    }
+
+    @Test
     void truncatedKakalotFeedCannotConfirmAnEmptyTitle() {
         var source = new MangaKakalotSource(client);
         doReturn(json.readTree("""
                 {"success":true,"data":{"chapters":[],"pagination":{"total":9,"offset":0,"limit":-1}}}
-                """)).when(client).json(eq(URI.create("https://www.katamanga.com/api/manga/sample/chapters?limit=-1")),
+                """)).when(client).json(eq(URI.create("https://www.mangagoku.com/api/manga/sample/chapters?limit=-1")),
                 isNull(), notNull());
         assertThatExceptionOfType(ApiException.class).isThrownBy(() -> source.scanChapters("sample"))
                 .matches(error -> "SOURCE_BAD_RESPONSE".equals(error.code()));
@@ -40,7 +59,7 @@ class PublicSourcesTest {
     @Test
     void mangaKakalotUsesPublicFeedOnDeniedSearchAndKeepsImageOrder() {
         var source = new MangaKakalotSource(client);
-        URI feed = URI.create("https://www.katamanga.com/manga-list/hot-manga?page=1");
+        URI feed = URI.create("https://www.mangagoku.com/manga-list/hot-manga?page=1");
         doReturn(Jsoup.parse("""
                 <div class="list-comic-item-wrap">
                   <h3><a href="/manga/sample">Sample</a></h3>
@@ -55,19 +74,19 @@ class PublicSourcesTest {
                   {"chapter_slug":"chapter-1","chapter_name":"First","chapter_num":1}],
                   "pagination":{"total":2,"limit":-1,"offset":0}}}
                 """)).when(client).json(
-                eq(URI.create("https://www.katamanga.com/api/manga/sample/chapters?limit=-1")), isNull(), notNull());
+                eq(URI.create("https://www.mangagoku.com/api/manga/sample/chapters?limit=-1")), isNull(), notNull());
         doReturn(Jsoup.parse("""
                 <div class="manga-info-top">
                   <h1>Sample</h1><ul><li>Author(s) : Author</li></ul>
                 </div>
                 <div id="contentBox"><h2>Summary</h2><p>Example description.</p></div>
-                """)).when(client).html(eq(URI.create("https://www.katamanga.com/manga/sample")), notNull());
+                """)).when(client).html(eq(URI.create("https://www.mangagoku.com/manga/sample")), notNull());
         doReturn(Jsoup.parse("""
                 <script>
                   var cdns = ["https://imgs-2.2xstorage.com"];
                   var chapterImages = ["sample/1/b.webp", "sample/1/a.webp"];
                 </script>
-                """)).when(client).html(eq(URI.create("https://www.katamanga.com/manga/sample/chapter-1")), notNull());
+                """)).when(client).html(eq(URI.create("https://www.mangagoku.com/manga/sample/chapter-1")), notNull());
 
         assertThat(source.searchTitles("sample")).extracting(SourceTitle::externalTitleId).containsExactly("sample");
         assertThatExceptionOfType(ApiException.class).isThrownBy(() -> source.searchTitles("unknown"))

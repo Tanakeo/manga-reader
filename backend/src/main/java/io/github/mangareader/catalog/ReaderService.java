@@ -87,11 +87,12 @@ public class ReaderService {
         String address = manifest.pages().pages().get(index).imageUrl();
         URI uri = PublicSourceClient.httpsUrl(address, adapter.imageDomains().toArray(String[]::new));
         if (uri == null) throw ApiException.problem(HttpStatus.BAD_GATEWAY, "IMAGE_BAD_RESPONSE", "Недопустимый адрес изображения.");
-        try { return download(uri, manifest.pages().attribution().sourceUrl()); }
+        String referer=adapter.imageReferer(manifest.pages().attribution().sourceUrl());
+        try { return download(uri, referer); }
         catch (ApiException first) {
             for (URI alternative : adapter.alternativeImages(uri)) {
                 if (PublicSourceClient.httpsUrl(alternative.toString(), adapter.imageDomains().toArray(String[]::new)) == null) continue;
-                try { return download(alternative, manifest.pages().attribution().sourceUrl()); }
+                try { return download(alternative, referer); }
                 catch (ApiException ignored) { /* Try the remaining configured CDN. */ }
             }
             throw first;

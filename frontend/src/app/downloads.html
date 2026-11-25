@@ -35,7 +35,16 @@
                 {{ store.busy().has(item.id) ? 'Повторяем…' : 'Повторить' }}
               </button>
             }
-            @if (item.status === 'READY' || item.status === 'FAILED' || (item.status === 'DELETING' && item.error)) {
+            @if (item.status === 'QUEUED' || item.status === 'DOWNLOADING') {
+              <button class="button secondary" type="button" [disabled]="store.busy().has(item.id)" (click)="store.control(item,'pause')">Пауза</button>
+            }
+            @if (item.status === 'PAUSED') {
+              <button class="button secondary" type="button" [disabled]="store.busy().has(item.id)" (click)="store.control(item,'resume')">Продолжить</button>
+            }
+            @if (item.status === 'QUEUED' || item.status === 'PAUSED') {
+              <button class="button secondary" type="button" [disabled]="store.busy().has(item.id)" (click)="store.control(item,'prioritize')">Повысить приоритет</button>
+            }
+            @if (['READY','FAILED','PAUSED','QUEUED'].includes(item.status) || (item.status === 'DELETING' && item.error)) {
               <button class="button secondary" type="button" aria-haspopup="dialog"
                 [disabled]="store.busy().has(item.id)" (click)="openDelete(item)">
                 {{ item.status === 'DELETING' ? 'Повторить удаление' : 'Удалить загрузку' }}

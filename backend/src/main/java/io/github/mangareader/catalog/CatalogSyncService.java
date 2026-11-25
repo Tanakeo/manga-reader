@@ -44,6 +44,7 @@ public class CatalogSyncService {
     private final MangaSourceRegistry registry;
     private final SourceConnectionService connections;
     private final TitleRepository titles;
+    private final LibraryUpdates libraryUpdates;
     private final TransactionTemplate writes;
     private final java.util.concurrent.ExecutorService workers = Executors.newFixedThreadPool(2);
     private final Set<String> running = ConcurrentHashMap.newKeySet();
@@ -51,12 +52,13 @@ public class CatalogSyncService {
 
     public CatalogSyncService(JdbcClient jdbc, JsonMapper json, MangaSourceRegistry registry,
                               SourceConnectionService connections, TitleRepository titles,
-                              PlatformTransactionManager transactions) {
+                              PlatformTransactionManager transactions, LibraryUpdates libraryUpdates) {
         this.jdbc = jdbc;
         this.json = json;
         this.registry = registry;
         this.connections = connections;
         this.titles = titles;
+        this.libraryUpdates = libraryUpdates;
         this.writes = new TransactionTemplate(transactions);
     }
 
@@ -221,6 +223,12 @@ public class CatalogSyncService {
     @Scheduled(fixedDelay = 60000, initialDelay = 60000)
     void recheckDueTitles() {
         jdbc.sql("""
+                INSERT INTO chapter_check_jobs(id,title_id)
+                SELECT gen_random_uuid(),e.title_id FROM library_entries e JOIN titles t ON t.id=e.title_id
+                JOIN connected_sources s ON s.source_id=t.source_id
+                ON CONFLICT(title_id) DO NOTHING
+                """).update();
+        jdbc.sql("""
                 UPDATE chapter_check_jobs j SET state='QUEUED',attempts=0,next_attempt_at=now()
                 WHERE j.state IN ('DONE','ERROR') AND EXISTS(
                     SELECT 1 FROM title_chapter_checks c JOIN titles t ON t.id=c.title_id
@@ -230,14 +238,16 @@ public class CatalogSyncService {
     }
 
     private void step(MangaSource source) {
-        var explicit = claimChapter(source.id(), true);
+        var explicit = claimChapter(source.id(), true, false);
         if (explicit != null) { check(source, explicit); return; }
         boolean connected = jdbc.sql("SELECT EXISTS(SELECT 1 FROM connected_sources WHERE source_id=:source)")
                 .param("source", source.id()).query(Boolean.class).single();
         if (!connected) return;
+        var library = claimChapter(source.id(), false, true);
+        if (library != null) { check(source, library); finishRuns(source.id()); return; }
         var run = claimRun(source.id());
         if (run != null) { importPage(source, run); return; }
-        var chapter = claimChapter(source.id(), false);
+        var chapter = claimChapter(source.id(), false, false);
         if (chapter != null) check(source, chapter);
         finishRuns(source.id());
     }
@@ -254,18 +264,19 @@ public class CatalogSyncService {
                         r.getString(3), r.getString(4), r.getInt(5), null, null)).optional().orElse(null);
     }
 
-    private Claim claimChapter(String source, boolean explicitOnly) {
+    private Claim claimChapter(String source, boolean explicitOnly, boolean libraryOnly) {
         return jdbc.sql("""
                 UPDATE chapter_check_jobs SET state='RUNNING',lease_until=now()+interval '2 minutes',
                     attempt_version=attempt_version+1,updated_at=now()
                 WHERE id=(SELECT j.id FROM chapter_check_jobs j JOIN titles t ON t.id=j.title_id
                     WHERE t.source_id=:source AND (:explicit=false OR j.explicit_request)
+                    AND (:library=false OR EXISTS(SELECT 1 FROM library_entries e WHERE e.title_id=t.id))
                     AND j.state IN ('QUEUED','RUNNING','WAITING_RETRY') AND j.next_attempt_at<=now()
                     AND (j.lease_until IS NULL OR j.lease_until<now())
                     ORDER BY j.explicit_request DESC,j.updated_at,j.id LIMIT 1)
                 RETURNING id,attempt_version,title_id,attempts,
                     (SELECT external_title_id FROM titles WHERE id=chapter_check_jobs.title_id)
-                """).param("source", source).param("explicit", explicitOnly).query((r, i) ->
+                """).param("source", source).param("explicit", explicitOnly).param("library", libraryOnly).query((r, i) ->
                         new Claim(r.getObject(1, UUID.class), r.getLong(2), null, null, r.getInt(4),
                                 r.getObject(3, UUID.class), r.getString(5))).optional().orElse(null);
     }
@@ -340,6 +351,7 @@ public class CatalogSyncService {
                             .param("published", chapter.publishedAt() == null ? null : chapter.publishedAt().atOffset(java.time.ZoneOffset.UTC))
                             .param("data", json.writeValueAsString(chapter)).update();
                 }
+                if (result.complete()) libraryUpdates.observe(claim.title(), source.policyVersion());
                 for (String language : source.supportedLanguages()) saveCheck(source, claim.title(), language, result);
                 jdbc.sql("""
                         UPDATE titles SET source_latest_chapter_at=

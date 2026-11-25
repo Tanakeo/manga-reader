@@ -35,12 +35,14 @@ final class LibraryRequests {
             throw ApiException.validation(List.of(new FieldError("body", "EMPTY_PATCH", "Укажите поля для изменения.")));
         }
         var errors = new ArrayList<FieldError>();
-        checkFields(body, Set.of("status", "note", "progress"), "", errors);
+        checkFields(body, Set.of("status", "note", "progress", "expectedReadingRevision"), "", errors);
         ReadingStatus status = body.has("status") ? status(body.get("status"), errors) : null;
         String note = note(body.get("note"), errors);
         Progress progress = progress(body.get("progress"), errors);
+        String revision = body.has("expectedReadingRevision")
+                ? requiredText(body.get("expectedReadingRevision"), "expectedReadingRevision", errors) : null;
         throwIfInvalid(errors);
-        return new UpdateEntry(status, body.has("note"), note, body.has("progress"), progress);
+        return new UpdateEntry(status, body.has("note"), note, body.has("progress"), progress, revision);
     }
 
     static UUID entryId(String value) {

@@ -11,6 +11,7 @@ import java.util.UUID;
 public class Title {
     @Id
     private UUID id;
+    private UUID workId;
     private String sourceId;
     private String externalTitleId;
     private String sourceName;
@@ -28,8 +29,10 @@ public class Title {
 
     protected Title() {}
 
+    UUID id() { return id; }
+
     SourceTitleSummary summary() {
         return new SourceTitleSummary(sourceId, externalTitleId, sourceName, title, author, coverUrl,
-                titleRu, titleEn, publicationStatus, releaseYear);
+                titleRu, titleEn, publicationStatus, releaseYear, workId);
     }
 }

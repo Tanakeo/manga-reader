@@ -89,13 +89,14 @@ class SourceConnectionsTest {
                 .query(Boolean.class).single()).isTrue();
         JsonNode extensions = get("/extensions").path("items");
         assertThat(extensions).extracting(item -> item.path("sourceId").stringValue())
-                .containsExactly("a-test", "mangadex", "mangakakalot", "mangalib", "peppercarrot");
+                .containsExactly("a-test", "local", "mangadex", "mangakakalot", "mangalib", "peppercarrot");
         assertThat(extensions.get(0).path("enabled").asBoolean()).isFalse();
         assertThat(extensions.get(0).get("websiteUrl").isNull()).isTrue();
         assertThat(extensions.get(1).path("enabled").asBoolean()).isFalse();
         assertThat(extensions.get(2).path("enabled").asBoolean()).isFalse();
         assertThat(extensions.get(3).path("enabled").asBoolean()).isFalse();
-        assertThat(extensions.get(4).path("enabled").asBoolean()).isTrue();
+        assertThat(extensions.get(4).path("enabled").asBoolean()).isFalse();
+        assertThat(extensions.get(5).path("enabled").asBoolean()).isTrue();
         JsonNode sources = get("/sources").path("items");
         assertThat(sources).hasSize(1);
         assertThat(sources.get(0).path("sourceId").stringValue()).isEqualTo("peppercarrot");
@@ -120,7 +121,7 @@ class SourceConnectionsTest {
         try {
             assertCodesInParallel("DELETE", 204);
             assertThat(get("/sources").path("items").isEmpty()).isTrue();
-            assertThat(get("/extensions").path("items").get(2).path("enabled").asBoolean()).isFalse();
+            assertThat(get("/extensions").path("items").get(3).path("enabled").asBoolean()).isFalse();
             assertThat(get("/catalog").path("items").isEmpty()).isTrue();
             problem("GET", "/catalog?sourceId=peppercarrot", 409, "SOURCE_DISABLED");
             assertCodesInParallel("PUT", 200);
@@ -153,8 +154,8 @@ class SourceConnectionsTest {
         String entry = "/library/" + created.path("id").stringValue();
         try {
             json(request("PATCH", entry, """
-                    {"progress":{"chapterId":"ep01_Potion-of-Flight","language":"ru","pageIndex":0}}
-                    """), 200);
+                    {"expectedReadingRevision":"%s","progress":{"chapterId":"ep01_Potion-of-Flight","language":"ru","pageIndex":0}}
+                    """.formatted(created.path("readingRevision").asString())), 200);
             JsonNode saved = get(entry);
             assertThat(saved.path("note").stringValue()).isEqualTo("Закладка");
             assertThat(saved.path("progress").path("pageIndex").asInt()).isZero();
@@ -175,6 +176,68 @@ class SourceConnectionsTest {
     }
 
     @Test
+    void readingKeepsBackwardPositionAndRejectsOldTabsWithoutDuplicatingHistory() {
+        String chapter = "ep01_Potion-of-Flight";
+        String external = "reading-regression-fixture";
+        titles.syncCatalog(List.of(new SourceTitle("peppercarrot",external,"Pepper&Carrot",external,
+                null,null,null,"https://www.peppercarrot.com/",null,null,null,null,null)));
+        UUID titleId = jdbc.sql("SELECT id FROM titles WHERE external_title_id=:external")
+                .param("external",external).query(UUID.class).single();
+        String path = PEPPER + "/titles/" + external;
+        jdbc.sql("""
+                INSERT INTO reader_manifests(source_id,external_title_id,chapter_id,language,version,data,fetched_at,expires_at)
+                VALUES('peppercarrot',:external,:chapter,'ru','test-version',
+                '{"pageCount":3,"title":"Test chapter","pages":[{"imageUrl":"https://example.com/1"},{"imageUrl":"https://example.com/2"},{"imageUrl":"https://example.com/3"}]}',
+                now(),now()+interval '3 minutes')
+                """).param("external",external).param("chapter",chapter).update();
+        try {
+            UUID tab = UUID.randomUUID();
+            String claim = """
+                    {"eventId":"%s","sessionId":"%s","expectedRevision":"0"}
+                    """.formatted(UUID.randomUUID(),tab);
+            var first = json(request("POST",path + "/reading/sessions",claim),200);
+            String forward = readingEvent(tab,1,first.path("revision").asString(),chapter,2,false);
+            var saved = json(request("PUT",path + "/reading/progress",forward),200);
+            assertThat(saved.path("resume").path("pageIndex").asInt()).isEqualTo(2);
+            var duplicate = json(request("PUT",path + "/reading/progress",forward),200);
+            assertThat(duplicate.path("applied").asBoolean()).isFalse();
+            assertThat(duplicate.path("chapter").path("activeSeconds").asLong()).isEqualTo(2);
+            var backward = json(request("PUT",path + "/reading/progress",
+                    readingEvent(tab,2,saved.path("revision").asString(),chapter,1,false)),200);
+            assertThat(backward.path("resume").path("pageIndex").asInt()).isEqualTo(1);
+            assertThat(backward.path("chapter").path("maxSeenPageIndex").asInt()).isEqualTo(2);
+            UUID secondTab = UUID.randomUUID();
+            var second = json(request("POST",path + "/reading/sessions","""
+                    {"eventId":"%s","sessionId":"%s","expectedRevision":"%s"}
+                    """.formatted(UUID.randomUUID(),secondTab,backward.path("revision").asString())),200);
+            json(request("PUT",path + "/reading/progress",
+                    readingEvent(tab,3,second.path("revision").asString(),chapter,0,false)),409);
+            json(request("POST",path + "/reading/sessions",claim),409);
+            var finished = json(request("PUT",path + "/reading/progress",
+                    readingEvent(secondTab,1,second.path("revision").asString(),chapter,0,true)),200);
+            assertThat(finished.path("chapter").path("isRead").asBoolean()).isTrue();
+            assertThat(get("/reading-history?limit=1").path("items").get(0).path("pageIndex").asInt()).isZero();
+            var reset = json(request("PATCH",path + "/chapters/" + chapter + "/reading?language=ru","""
+                    {"eventId":"%s","expectedRevision":"%s","isRead":false}
+                    """.formatted(UUID.randomUUID(),finished.path("revision").asString())),200);
+            assertThat(reset.path("chapter").path("seenPageIndexes")).isEmpty();
+            assertThat(reset.path("chapter").path("isRead").asBoolean()).isFalse();
+            assertThat(reset.path("resume").path("pageIndex").asInt()).isZero();
+        } finally {
+            jdbc.sql("DELETE FROM reader_manifests WHERE external_title_id=:external").param("external",external).update();
+            jdbc.sql("DELETE FROM titles WHERE id=:id").param("id",titleId).update();
+        }
+    }
+
+    private static String readingEvent(UUID session,long sequence,String revision,String chapter,int index,boolean end) {
+        return """
+                {"eventId":"%s","sessionId":"%s","sequence":%s,"expectedRevision":"%s","chapterId":"%s",
+                "language":"ru","pageIndex":%s,"manifestVersion":"test-version","seenPageIndexes":[%s],
+                "reachedEnd":%s,"activeSecondsDelta":2}
+                """.formatted(UUID.randomUUID(),session,sequence,revision,chapter,index,index,end);
+    }
+
+    @Test
     void librarySectionsKeepMembershipIndependentOfReadingState() {
         String sections = "/library/sections";
         JsonNode entry = json(request("POST", "/library", """
@@ -183,8 +246,10 @@ class SourceConnectionsTest {
         String entryId = entry.path("id").stringValue();
         String entryPath = "/library/" + entryId;
         jdbc.sql("""
-                UPDATE library_entries SET progress_chapter_id = 'ep01_Potion-of-Flight',
-                    progress_language = 'ru', progress_page_index = 0 WHERE id = :id
+                INSERT INTO title_reading_state(title_id,chapter_id,language,page_index)
+                SELECT title_id,'ep01_Potion-of-Flight','ru',0 FROM library_entries WHERE id=:id
+                ON CONFLICT(title_id) DO UPDATE SET chapter_id=excluded.chapter_id,language=excluded.language,
+                    page_index=excluded.page_index
                 """).param("id", UUID.fromString(entryId)).update();
 
         String weekend = sections + "/" + json(request("POST", sections, """

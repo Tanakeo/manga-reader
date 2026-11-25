@@ -53,10 +53,13 @@ public class TitleRepository {
     private static final String UPSERT_FROM_CATALOG = UPSERT_TEMPLATE.formatted(CATALOG_VALUES);
     private final NamedParameterJdbcTemplate jdbc;
     private final TitleTagRepository tags;
+    private final io.github.mangareader.catalog.WorkIdentityRepository identity;
 
-    TitleRepository(NamedParameterJdbcTemplate jdbc, TitleTagRepository tags) {
+    TitleRepository(NamedParameterJdbcTemplate jdbc, TitleTagRepository tags,
+                    io.github.mangareader.catalog.WorkIdentityRepository identity) {
         this.jdbc = jdbc;
         this.tags = tags;
+        this.identity = identity;
     }
 
     @Transactional
@@ -85,6 +88,7 @@ public class TitleRepository {
                 .sorted(Comparator.comparing(SourceTitle::sourceId).thenComparing(SourceTitle::externalTitleId))
                 .map(TitleRepository::parameters).toArray(MapSqlParameterSource[]::new);
         jdbc.batchUpdate(upsert, parameters);
+        identity.save(titles);
         titles.stream().sorted(Comparator.comparing(SourceTitle::sourceId).thenComparing(SourceTitle::externalTitleId))
                 .forEach(tags::replaceLinks);
 

@@ -1,11 +1,11 @@
-import { Component, computed, DestroyRef, ElementRef, inject, input, signal, viewChild } from '@angular/core';
+import { Component, computed, DestroyRef, ElementRef, inject, input, linkedSignal, signal, viewChild } from '@angular/core';
 import { rxResource, takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import { FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { LucideArrowLeft as ArrowLeft, LucideArrowRight as ArrowRight, LucideArrowUpRight as ArrowUpRight, LucideBookOpen as BookOpen, LucideCheck as Check, LucideChevronRight as ChevronRight, LucideDynamicIcon, LucidePlus as Plus } from '@lucide/angular';
 import { finalize } from 'rxjs';
 import {
-  Api, Chapter, fieldError, languageName, LibraryEntry, libraryStatusParams, Problem, problem, readerLink,
+  Api, Chapter, ChapterAction, ChapterBookmark, fieldError, languageName, LibraryEntry, libraryStatusParams, Problem, problem, readerLink,
   ReadingStatus, sameTitle, statusOptions, statuses, TitleKey,
 } from './api';
 import { catalogParams, readCatalog, tagName } from './catalog-query';
@@ -104,9 +104,11 @@ export class AddEntry {
 
 @Component({
   imports: [RouterLink, LucideDynamicIcon, Cover, State, AddEntry, LocalizedTitle, MagneticButton, CatalogFacts],
+  selector: 'app-title-page',
   templateUrl: './title.html',
 })
 export class TitlePage {
+  private readonly destroy = inject(DestroyRef);
   private readonly details = inject(TitleDetails);
   private readonly preview = inject(TitlePreviewState);
   private readonly router = inject(Router);
@@ -140,6 +142,7 @@ export class TitlePage {
   protected readonly backHref = computed(() => this.preview.pageReturn()?.url ??
     this.router.serializeUrl(this.router.createUrlTree(['/catalog'], {queryParams: this.backParams()})));
   protected readonly backLabel = computed(() => this.preview.pageReturn()?.url.startsWith('/library') ? 'Библиотека' : 'Каталог');
+  protected readingState() {return {kadrTitleReturn:this.preview.pageReturn()};}
   protected readonly chapterLanguage = computed(() => {
     const languages = this.catalogContext().getAll('chapterLanguage');
     return languages.length === 1 ? languages[0] : '';
@@ -148,7 +151,7 @@ export class TitlePage {
     stream: ({params}) => this.api.chapters(params.key, params.language)});
   protected readonly chapterCheck = computed(() => this.api.chapterAvailability(this.key(), this.chapterLanguage()));
   protected setChapterLanguage(language: string) {
-    void this.router.navigate([], {queryParams: {chapterLanguage: language || null}, queryParamsHandling: 'merge'});
+    void this.router.navigate([], {queryParams: {chapterLanguage: language || null}, queryParamsHandling: 'merge',state:this.readingState()});
   }
   protected readonly library = rxResource({stream: () => this.api.library()});
   protected readonly entry = computed(() => this.library.hasValue()
@@ -157,6 +160,69 @@ export class TitlePage {
   protected readonly availableLanguages = computed(() => this.chapters.hasValue()
     ? [...new Set(this.chapters.value().flatMap(chapter => chapter.languages))]
     : []);
+  protected readonly reading = rxResource({params: () => this.title.hasValue() ? this.key() : undefined,
+    stream: ({params}) => this.api.reading(params)});
+  protected readonly resume = computed(() => this.reading.hasValue() ? this.reading.value().resume : null);
+  protected readonly readChapters = computed(() => new Set(this.reading.hasValue() ? this.reading.value().chapters
+    .filter(chapter => chapter.isRead).map(chapter => chapter.chapterId + '/' + chapter.language) : []));
+  protected readonly readingIssue = signal('');
+  protected readonly readingBusy = signal(false);
+  protected readonly bookmarks = rxResource({params: () => this.title.hasValue() ? this.key() : undefined,
+    stream: ({params}) => this.api.bookmarks(params)});
+  protected readonly selectedEditions = linkedSignal(() => { this.key(); return new Map<string,ChapterBookmark>(); });
+  protected readonly batchFeedback = signal<string[]>([]);
+  protected readonly batchMode = signal(false);
+  protected readonly batchBusy = signal(false);
+
+  protected editionSelected(chapter:string,language:string) {
+    return this.selectedEditions().has(chapter + '/' + language);
+  }
+
+  protected selectEdition(chapterId:string,language:string,checked:boolean) {
+    this.selectedEditions.update(current => {
+      const next = new Map(current);
+      const key = chapterId + '/' + language;
+      if (checked && next.size < 100) next.set(key,{chapterId,language,pageIndex:null});
+      else if (!checked) next.delete(key);
+      return next;
+    });
+  }
+
+  protected runBatch(action:ChapterAction) {
+    if (!this.selectedEditions().size || this.batchBusy()) return;
+    this.batchBusy.set(true);
+    this.batchFeedback.set([]);
+    this.api.chapterActions(this.key(),action,[...this.selectedEditions().values()])
+      .pipe(takeUntilDestroyed(this.destroy),finalize(() => this.batchBusy.set(false))).subscribe({
+        next: rows => {
+          this.batchFeedback.set(['Выполнено: ' + rows.filter(row => row.success).length + ' из ' + rows.length,
+            ...rows.filter(row => !row.success).map(row => row.item.chapterId + ' · ' + row.item.language + ' — ' + row.detail)]);
+          for (const row of rows) if (row.success) this.selectEdition(row.item.chapterId,row.item.language,false);
+          this.reading.reload();
+          this.bookmarks.reload();
+          if (action === 'download') this.downloads.data.reload();
+        },
+        error: error => this.batchFeedback.set([problem(error).detail]),
+      });
+  }
+
+  protected markRead(chapter: string, language: string) {
+    if (!this.reading.hasValue() || this.readingBusy()) return;
+    this.readingBusy.set(true);
+    this.readingIssue.set('');
+    const key = this.key();
+    this.api.markReading(key, chapter, language, !this.readChapters().has(chapter + '/' + language), this.reading.value().revision)
+      .subscribe({
+        next: () => { this.readingBusy.set(false); if (sameTitle(key, this.key())) this.reading.reload(); },
+        error: error => {
+          this.readingBusy.set(false);
+          if (!sameTitle(key, this.key())) return;
+          this.readingIssue.set(problem(error).detail);
+          this.reading.reload();
+        },
+      });
+  }
+
   protected readonly firstChapter = computed(() => this.chapters.hasValue()
     ? this.chapters.value().find(chapter => chapter.languages.length)
     : undefined);

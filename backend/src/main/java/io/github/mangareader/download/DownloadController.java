@@ -56,6 +56,11 @@ class DownloadController {
                 .orElseGet(() -> ResponseEntity.noContent().build());
     }
 
+    @PostMapping("/{id}/queue/{action}")
+    ResponseEntity<Download> control(@PathVariable UUID id,@PathVariable String action) {
+        return result(downloads.control(id, action));
+    }
+
     @GetMapping("/{id}/pages")
     ChapterPages pages(@PathVariable UUID id) {
         return downloads.pages(id);

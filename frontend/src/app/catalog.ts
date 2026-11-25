@@ -1,4 +1,4 @@
-import { afterNextRender, Component, computed, DestroyRef, inject, Injector, signal } from '@angular/core';
+import { afterNextRender, Component, computed, DestroyRef, inject, Injector, signal, viewChildren } from '@angular/core';
 import { rxResource, takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, NavigationStart, Router, RouterLink } from '@angular/router';
@@ -12,9 +12,12 @@ import { LocalizedTitle, TitleLocale } from './title-locale';
 import { CommandSearch } from './shared/command-search';
 import { TitlePreviewLink } from './shared/title-preview-link';
 import { TitleDetails } from './shared/title-details';
+import { Showcase } from './showcase';
+import { WorkFacts } from './work-facts';
+import { toSignal } from '@angular/core/rxjs-interop';
 
 @Component({
-  imports: [FormsModule, RouterLink, LucideDynamicIcon, Cover, State, CatalogFacts, LocalizedTitle, CommandSearch, TitlePreviewLink],
+  imports: [FormsModule, RouterLink, LucideDynamicIcon, Cover, State, CatalogFacts, LocalizedTitle, CommandSearch, TitlePreviewLink, Showcase, WorkFacts],
   templateUrl: './catalog.html',
   providers: [CatalogFeed],
 })
@@ -23,6 +26,9 @@ export class Catalog {
   private readonly details = inject(TitleDetails);
   private readonly router = inject(Router);
   private readonly route = inject(ActivatedRoute);
+  private readonly routeParams = toSignal(this.route.queryParamMap, {requireSync:true});
+  protected readonly showcaseView = computed(() => this.routeParams().get('view') === 'showcase'
+    || !this.routeParams().keys.some(key => ['view','q','sourceId','tagId','sort','chapterLanguage'].includes(key)));
   private normalization?: ReturnType<typeof setTimeout>;
   protected readonly query = signal(readCatalog(this.route.snapshot.queryParamMap), {
     equal: (a, b) => a.sourceId === b.sourceId && a.q === b.q && a.sort === b.sort
@@ -75,6 +81,8 @@ export class Catalog {
   protected readonly loadingMore = this.response.loadingMore;
   protected readonly moreError = this.response.moreError;
   protected readonly currentPage = computed(() => this.response.data()?.page);
+  private readonly covers = viewChildren(Cover);
+  protected readonly visibleCount = computed(() => this.covers().filter(cover => !cover.missing()).length);
   protected readonly results = {
     hasValue: () => this.response.hasValue(),
     isLoading: () => this.response.isLoading(),
@@ -107,6 +115,7 @@ export class Catalog {
     let first = true;
     this.route.queryParamMap.pipe(takeUntilDestroyed()).subscribe(params => {
       clearTimeout(this.normalization);
+      if (params.get('view') === 'showcase' || !params.keys.some(key => ['view','q','sourceId','tagId','sort','chapterLanguage'].includes(key))) return;
       const query = readCatalog(params);
       this.query.set(query);
       const restore = first || this.router.getCurrentNavigation()?.trigger === 'popstate';
@@ -135,7 +144,7 @@ export class Catalog {
 
   protected countLabel(count: number) {
     const form = new Intl.PluralRules('ru').select(count);
-    return count + ' ' + (form === 'one' ? 'тайтл' : form === 'few' ? 'тайтла' : 'тайтлов') + ' в каталоге';
+    return 'Показано: ' + count + ' ' + (form === 'one' ? 'тайтл' : form === 'few' ? 'тайтла' : 'тайтлов');
   }
 
   protected reset() {

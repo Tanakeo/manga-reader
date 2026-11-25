@@ -37,6 +37,7 @@ export function readCatalog(params: ParamMap, sourceKey = 'sourceId') {
 
 export function catalogParams(query: CatalogQuery, sourceKey = 'sourceId') {
   return {
+    view: 'works',
     [sourceKey]: query.sourceId || null,
     q: query.q || null,
     tagId: query.tagIds.length ? query.tagIds : null,

@@ -5,6 +5,7 @@ import { SkipLink } from './common';
 import { NavigationDock } from './navigation-dock';
 import { TitleLocale } from './title-locale';
 import { TitlePreview } from './shared/title-preview';
+import { ReadingProgressStore } from './reading-progress';
 import { TitlePreviewState } from './shared/title-preview-state';
 
 @Component({
@@ -12,7 +13,7 @@ import { TitlePreviewState } from './shared/title-preview-state';
   imports: [RouterOutlet],
   template: '<router-outlet/>',
 })
-export class App {}
+export class App { constructor() { inject(ReadingProgressStore); } }
 
 @Component({
   imports: [RouterLink, RouterOutlet, SkipLink, NavigationDock, TitlePreview],
@@ -62,12 +63,23 @@ export const routes: Routes = [
     path: '', component: Layout, children: [
       {path: '', redirectTo: 'catalog', pathMatch: 'full'},
       {path: 'catalog', loadComponent: () => import('./catalog').then(module => module.Catalog), title: 'Каталог — Кадр'},
+      {path:'catalog/works/:workId',loadComponent:()=>import('./work-page').then(module=>module.WorkPage),title:'Произведение — Кадр'},
       {path: 'catalog/:sourceId/:externalTitleId',
         loadComponent: () => import('./title').then(module => module.TitlePage), title: 'Тайтл — Кадр'},
+      {path: 'library/history', loadComponent: () => import('./reading-history').then(module => module.ReadingHistoryPage),
+        title: 'История чтения — Кадр'},
+      {path: 'library/updates', loadComponent: () => import('./library-updates').then(module => module.LibraryUpdates),
+        title: 'Новые главы — Кадр'},
+      {path: 'library/backup', loadComponent: () => import('./library-tools').then(module => module.LibraryBackupPage),
+        title: 'Резервная копия — Кадр'},
+      {path: 'library/transfer/:entryId', loadComponent: () => import('./library-tools').then(module => module.LibraryTransferPage),
+        title: 'Перенос тайтла — Кадр'},
       {path: 'library/downloads', pathMatch: 'full',
         redirectTo: () => inject(Router).createUrlTree(['/library'], {queryParams: {section: 'downloads'}})},
       {path: 'library', loadComponent: () => import('./library').then(module => module.Library), title: 'Библиотека — Кадр'},
       {path: 'browse', component: Browse, title: 'Обзор — Кадр'},
+      {path: 'local/import', loadComponent: () => import('./local-import').then(module => module.LocalImport),
+        title: 'Импорт комикса — Кадр'},
       {path: '**', component: NotFound, title: 'Страница не найдена — Кадр'},
     ],
   },

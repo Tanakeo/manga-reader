@@ -90,6 +90,7 @@ export class LibraryEditor {
     }
     if (!Object.keys(update).length) { this.cancelled.emit(); return; }
 
+    if (update.progress !== undefined) update.expectedReadingRevision = current.readingRevision;
     this.pending.set(true);
     this.saving.emit(true);
     this.api.update(current.id, update).pipe(
@@ -177,6 +178,16 @@ export class Library {
       [entry.title.title, entry.title.titleRu, entry.title.titleEn].some(name => name?.toLocaleLowerCase().includes(query)));
   });
   private readonly entryIds = computed(() => new Set(this.allEntries().map(entry => entry.id)));
+  protected readonly workEntries = computed(() => {
+    const groups = new Map<string, LibraryEntry[]>();
+    const visible=new Set(this.visibleEntries().map(entry=>entry.title.workId || entry.id));
+    for (const entry of this.allEntries()) {
+      const key = entry.title.workId || entry.id;
+      if(!visible.has(key))continue;
+      groups.set(key, [...(groups.get(key) ?? []), entry]);
+    }
+    return [...groups.values()];
+  });
 
   protected readonly panel = signal<LibraryDialog | undefined>(undefined);
   protected readonly name = signal('');

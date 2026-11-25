@@ -135,19 +135,7 @@ public class PublicSourceClient {
             if (response.status() != 200) throw failure(response, true);
             MediaType type = response.type();
             byte[] bytes = response.bytes();
-            boolean signature = bytes.length >= 12 && type != null && switch (type.getSubtype()) {
-                case "jpeg" -> (bytes[0] & 255) == 255 && (bytes[1] & 255) == 216 && (bytes[2] & 255) == 255;
-                case "png" -> (bytes[0] & 255) == 137 && bytes[1] == 80 && bytes[2] == 78 && bytes[3] == 71
-                        && bytes[4] == 13 && bytes[5] == 10 && bytes[6] == 26 && bytes[7] == 10;
-                case "gif" -> bytes[0] == 'G' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == '8';
-                case "webp" -> bytes[0] == 'R' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == 'F'
-                        && bytes[8] == 'W' && bytes[9] == 'E' && bytes[10] == 'B' && bytes[11] == 'P';
-                case "avif" -> bytes[4] == 'f' && bytes[5] == 't' && bytes[6] == 'y' && bytes[7] == 'p'
-                        && bytes[8] == 'a' && bytes[9] == 'v' && bytes[10] == 'i' && (bytes[11] == 'f' || bytes[11] == 's');
-                default -> false;
-            };
-            if (type == null || !"image".equals(type.getType())
-                    || !IMAGE_TYPES.contains(type.getSubtype()) || !signature) {
+            if (!matchesImage(type,bytes)) {
                 throw ApiException.withDetails(HttpStatus.BAD_GATEWAY, "IMAGE_BAD_RESPONSE",
                         "Источник вернул некорректное изображение.", java.util.Map.of("stage", "IMAGE", "retryable", false));
             }
@@ -156,6 +144,21 @@ public class PublicSourceClient {
             throw ApiException.withDetails(HttpStatus.SERVICE_UNAVAILABLE, "IMAGE_UNAVAILABLE",
                     "Не удалось загрузить изображение.", java.util.Map.of("stage", "IMAGE", "retryable", true));
         }
+    }
+
+    public static boolean matchesImage(MediaType type,byte[] bytes) {
+    boolean signature = bytes.length >= 12 && type != null && switch (type.getSubtype()) {
+        case "jpeg" -> (bytes[0] & 255) == 255 && (bytes[1] & 255) == 216 && (bytes[2] & 255) == 255;
+        case "png" -> (bytes[0] & 255) == 137 && bytes[1] == 80 && bytes[2] == 78 && bytes[3] == 71
+                && bytes[4] == 13 && bytes[5] == 10 && bytes[6] == 26 && bytes[7] == 10;
+        case "gif" -> bytes[0] == 'G' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == '8';
+        case "webp" -> bytes[0] == 'R' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == 'F'
+                && bytes[8] == 'W' && bytes[9] == 'E' && bytes[10] == 'B' && bytes[11] == 'P';
+        case "avif" -> bytes[4] == 'f' && bytes[5] == 't' && bytes[6] == 'y' && bytes[7] == 'p'
+                && bytes[8] == 'a' && bytes[9] == 'v' && bytes[10] == 'i' && (bytes[11] == 'f' || bytes[11] == 's');
+        default -> false;
+    };
+        return signature && "image".equals(type.getType()) && IMAGE_TYPES.contains(type.getSubtype());
     }
 
     private Wire fetch(URI initial, MediaType accept, String siteId, String referer) {
@@ -183,7 +186,7 @@ public class PublicSourceClient {
 
     private boolean trustedRedirect(URI original, URI target) {
         String[] domains = original.getHost().contains("manga") && !original.getHost().contains("mangalib")
-                ? new String[]{"kakamanga.com", "katamanga.com"}
+                ? new String[]{"kakamanga.com", "katamanga.com", "mangagoku.com"}
                 : new String[]{original.getHost()};
         return httpsUrl(target.toString(), domains) != null;
     }

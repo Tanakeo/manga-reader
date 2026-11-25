@@ -45,10 +45,11 @@ public class CatalogController {
     private final ChapterListingService chapterListing;
     private final JsonMapper json;
     private final ReaderService reader;
+    private final WorkService works;
 
     public CatalogController(MangaSourceRegistry registry, SourceConnectionService connections, TitleRepository titles,
                              TitleTagRepository titleTags, LocalCatalogService localCatalog, CatalogSyncService sync,
-                             ChapterListingService chapterListing, JsonMapper json, ReaderService reader) {
+                             ChapterListingService chapterListing, JsonMapper json, ReaderService reader, WorkService works) {
         this.registry = registry;
         this.connections = connections;
         this.titles = titles;
@@ -58,6 +59,7 @@ public class CatalogController {
         this.chapterListing = chapterListing;
         this.json = json;
         this.reader = reader;
+        this.works = works;
     }
 
     @GetMapping("/catalog")
@@ -67,7 +69,9 @@ public class CatalogController {
                                              @RequestParam(defaultValue = "") String sort,
                                              @RequestParam(name = "chapterLanguage", required = false) List<String> languages,
                                              @RequestParam(defaultValue = "24") int limit,
-                                             @RequestParam(required = false) String cursor) {
+                                             @RequestParam(required = false) String cursor,
+                                             @RequestParam(defaultValue = "sources") String view) {
+        if (!List.of("sources","works").contains(view)) throw CatalogSyncService.invalid("view","Неизвестный вид каталога.");
         if (q.length() > 120) {
             throw ApiException.validation(List.of(new FieldError("q", "TOO_LONG", "Введите не более 120 символов.")));
         }
@@ -90,10 +94,15 @@ public class CatalogController {
         }
         String query = q.strip();
         boolean filtered = !tags.isEmpty() || !order.isEmpty();
-        if (filtered && sourceId == null) throw ApiException.catalogSourceRequired();
+        if (filtered && sourceId == null && (!view.equals("works") || !tags.isEmpty())) throw ApiException.catalogSourceRequired();
         if (!tags.isEmpty() && !sources.getFirst().supportsTags()) {
             throw ApiException.problem(HttpStatus.UNPROCESSABLE_CONTENT, "CATALOG_OPTIONS_UNSUPPORTED",
                     "Источник или запрос не поддерживает выбранные фильтры и сортировку.");
+        }
+        if (view.equals("works")) {
+            if (!tags.isEmpty()) localCatalog.validateTags(sourceId,tags);
+            return works.list(sourceId,query,tags,order,
+                    languages==null?List.of():languages.stream().distinct().sorted().toList(),limit,cursor,false);
         }
         return localCatalog.catalog(sourceId, query, tags, order,
                 languages == null ? List.of() : languages.stream().distinct().sorted().toList(), limit, cursor);
@@ -124,6 +133,7 @@ public class CatalogController {
                 saved.withTags(titleTags.forTitle(sourceId, saved.externalTitleId())));
         result.set("chapterAvailability", sync.availability(sync.titleId(sourceId, externalTitleId),
                 source(sourceId).supportedLanguages()));
+        result.put("workId",works.forTitle(sync.titleId(sourceId,externalTitleId)).toString());
         if (metadataError != null) result.set("metadataError", json.valueToTree(
                 java.util.Map.of("code", metadataError.code(), "detail", metadataError.getMessage(), "stage", "TITLE")));
         return result;
@@ -156,6 +166,7 @@ public class CatalogController {
         checkExternalId("externalTitleId", externalTitleId);
         checkExternalId("chapterId", chapterId);
         ApiInputs.requireMatch("language", language, ApiInputs.LANGUAGE, 32);
+        chapterListing.ensureTitle(sourceId, externalTitleId);
         return reader.pages(sourceId, externalTitleId, chapterId, language, refresh);
     }
 

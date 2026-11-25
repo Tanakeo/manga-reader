@@ -26,16 +26,18 @@ public class LibraryService {
     private final EntityManager entityManager;
     private final TransactionTemplate writes;
     private final DownloadService downloads;
+    private final ReadingService reading;
 
     public LibraryService(MangaSourceRegistry sources, TitleRepository titles, LibraryEntryRepository entries,
                           EntityManager entityManager, PlatformTransactionManager transactionManager,
-                          DownloadService downloads) {
+                          DownloadService downloads, ReadingService reading) {
         this.sources = sources;
         this.titles = titles;
         this.entries = entries;
         this.entityManager = entityManager;
         this.writes = new TransactionTemplate(transactionManager);
         this.downloads = downloads;
+        this.reading = reading;
     }
 
     LibraryEntryView create(CreateEntry request) {
@@ -49,18 +51,21 @@ public class LibraryService {
             }
             var entry = new LibraryEntry(entityManager.getReference(Title.class, titleId),
                     request.status(), request.note());
-            return entries.saveAndFlush(entry).view();
+            return entries.saveAndFlush(entry).view(reading.head(titleId,false));
         });
     }
 
     @Transactional(readOnly = true)
     public List<LibraryEntryView> list() {
-        return entries.findAllByOrderByUpdatedAtDescIdDesc().stream().map(LibraryEntry::view).toList();
+        var heads = reading.libraryHeads();
+        return entries.findAllByOrderByUpdatedAtDescIdDesc().stream()
+                .map(entry -> entry.view(heads.getOrDefault(entry.titleId(),ReadingService.Head.EMPTY))).toList();
     }
 
     @Transactional(readOnly = true)
     public LibraryEntryView get(UUID id) {
-        return entries.findOneById(id).orElseThrow(this::notFound).view();
+        var entry = entries.findOneById(id).orElseThrow(this::notFound);
+        return entry.view(reading.head(entry.titleId(),false));
     }
 
     LibraryEntryView update(UUID id, UpdateEntry request) {
@@ -71,7 +76,9 @@ public class LibraryService {
         return writes.execute(transaction -> {
             LibraryEntry entry = entries.findForUpdate(id).orElseThrow(this::notFound);
             entry.apply(request);
-            return entry.view();
+            var head = request.hasProgress() ? reading.manual(entry.titleId(),request.progress(),request.expectedReadingRevision())
+                    : reading.head(entry.titleId(),false);
+            return entry.view(head);
         });
     }
 

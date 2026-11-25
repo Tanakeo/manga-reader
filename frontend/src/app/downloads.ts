@@ -9,6 +9,7 @@ import { LocalizedTitle, TitleLocale } from './title-locale';
 export function downloadState(item: Download) {
   switch (item.status) {
     case 'QUEUED': return 'В очереди';
+    case 'PAUSED': return 'На паузе';
     case 'DOWNLOADING': return item.totalPages
       ? `Загрузка · ${item.pagesDone} из ${item.totalPages}` : 'Загружаем…';
     case 'READY': return 'Скачано';
@@ -64,6 +65,10 @@ export class DownloadStore {
 
   retry(item: Download) {
     this.run(item.id, this.api.retryDownload(item.id));
+  }
+
+  control(item: Download, action: 'pause' | 'resume' | 'prioritize') {
+    this.run(item.id,this.api.controlDownload(item.id,action),() => this.data.reload());
   }
 
   remove(item: Download, done: () => void) {

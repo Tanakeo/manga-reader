@@ -1,0 +1,36 @@
+<main id="main-content" class="wrap section-page" tabindex="-1">
+  <a class="back-link" routerLink="/library">← Библиотека</a>
+  <h1 class="page-heading">История чтения</h1>
+  @if (loading() && !items().length) {
+    <app-state kind="loading" message="Загружаем историю…"/>
+  }
+  @if (error()) {
+    <app-state kind="error" [message]="error()" (retry)="load(cursor() ?? undefined)"/>
+  } @else if (!loading() && !items().length) {
+    <app-state kind="empty" message="Здесь появятся главы, которые вы открывали и читали."/>
+  }
+  <ol class="chapter-list">
+    @for (item of items(); track key(item)) {
+      <li class="chapter-row history-row">
+        <div>
+          <h2><a [routerLink]="titleLink(item.title)">{{ item.title | localizedTitle:locale() }}</a></h2>
+          <p>{{ item.chapterTitle }} · {{ lang(item.language) }} · стр. {{ item.pageIndex + 1 }}</p>
+          <p class="muted">{{ item.lastReadAt | date:'dd.MM.yyyy HH:mm' }}
+            @if (item.origin === 'LEGACY') { · Перенесённая позиция }
+            @if (item.origin === 'OFFLINE') { · Офлайн }
+          </p>
+        </div>
+        <div class="actions">
+          <a class="button primary compact" [routerLink]="readerLink(item.title,item.chapterId,item.language)"
+             [queryParams]="{page: item.pageIndex + 1, downloadId: item.downloadId}">Продолжить</a>
+          <button class="button secondary compact" [attr.aria-pressed]="item.isRead" [disabled]="marking()" (click)="mark(item)">
+            {{ item.isRead ? 'Прочитано' : 'Отметить прочитанной' }}
+          </button>
+        </div>
+      </li>
+    }
+  </ol>
+  @if (cursor(); as next) {
+    <button class="button secondary" [disabled]="loading()" (click)="load(next)">Показать ещё</button>
+  }
+</main>

@@ -1,7 +1,6 @@
 package io.github.mangareader.library;
 
 import io.github.mangareader.library.LibraryModels.LibraryEntryView;
-import io.github.mangareader.library.LibraryModels.Progress;
 import io.github.mangareader.library.LibraryModels.UpdateEntry;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -30,9 +29,6 @@ public class LibraryEntry {
     private String note;
     private Instant createdAt;
     private Instant updatedAt;
-    private String progressChapterId;
-    private String progressLanguage;
-    private Integer progressPageIndex;
 
     protected LibraryEntry() {}
 
@@ -51,18 +47,12 @@ public class LibraryEntry {
         if (update.hasNote()) {
             note = update.note();
         }
-        if (update.hasProgress()) {
-            Progress progress = update.progress();
-            progressChapterId = progress == null ? null : progress.chapterId();
-            progressLanguage = progress == null ? null : progress.language();
-            progressPageIndex = progress == null ? null : progress.pageIndex();
-        }
         updatedAt = Instant.now();
     }
 
-    LibraryEntryView view() {
-        Progress progress = progressChapterId == null ? null
-                : new Progress(progressChapterId, progressLanguage, progressPageIndex);
-        return new LibraryEntryView(id, title.summary(), status, note, progress, createdAt, updatedAt);
+    UUID titleId() { return title.id(); }
+
+    LibraryEntryView view(ReadingService.Head reading) {
+        return new LibraryEntryView(id, title.summary(), status, note, reading.progress(), reading.version(), createdAt, updatedAt);
     }
 }

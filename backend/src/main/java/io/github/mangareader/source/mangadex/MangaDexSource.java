@@ -329,7 +329,35 @@ public class MangaDexSource implements MangaSource {
                 localized(attributes.path("description")), WEBSITE + "/title/" + id, null, titleRu, titleEn,
                 status != null && STATUSES.contains(status) ? status : null, year > 0 ? year : null,
                 snapshot == null ? List.of() : snapshot, version(attributes),
-                snapshot == null ? null : Instant.now());
+                snapshot == null ? null : Instant.now(), identity(attributes));
+    }
+
+    private io.github.mangareader.source.SourceModels.Identity identity(JsonNode attributes) {
+        var aliases = new ArrayList<io.github.mangareader.source.SourceModels.Alias>();
+        attributes.path("title").properties().forEach(entry -> aliases.add(
+                new io.github.mangareader.source.SourceModels.Alias(entry.getValue().asText(),entry.getKey())));
+        for (JsonNode entry : attributes.path("altTitles")) entry.properties().forEach(name -> aliases.add(
+                new io.github.mangareader.source.SourceModels.Alias(name.getValue().asText(),name.getKey())));
+        var ids=new LinkedHashMap<String,String>();
+        for (String key : List.of("al","mal","mu","kt")) {
+            String value=text(attributes.path("links").path(key));
+            if (value!=null) ids.put(key,value);
+        }
+        boolean colored=elements(attributes.path("tags")).anyMatch(tag ->
+                "Official Colored".equals(tag.path("attributes").path("name").path("en").asText()));
+        return new io.github.mangareader.source.SourceModels.Identity(aliases,ids,
+                text(attributes.path("originalLanguage")),"MANGA",colored ? "COLORED" : "ORIGINAL");
+    }
+
+    public JsonNode statistics(String id) {
+        return client.get(uri -> uri.path("/statistics/manga/").path(id).build());
+    }
+
+    public List<SourceTitle> popularTitles() {
+        var response=client.get(uri -> uri.path("/manga").queryParam("limit",100)
+                .queryParam("order[followedCount]","desc").queryParam("contentRating[]","safe","suggestive")
+                .queryParam("includes[]","cover_art","author").build());
+        return elements(dataArray(response)).filter(this::supportedTitle).map(this::readTitle).toList();
     }
 
     private static List<Tag> readTags(JsonNode entries) {

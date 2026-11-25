@@ -54,7 +54,7 @@ const loadingCharacters = [
       <img [src]="url" [alt]="label()" (error)="markFailed(url)"
         [attr.title]="url === alternateMangaDexCover() ? 'Обложка из MangaDex' : null"
         [attr.loading]="eager() ? 'eager' : 'lazy'" decoding="async">
-    } @else {
+    } @else if (showFallback()) {
       <div class="cover-fallback" role="img" [attr.aria-label]="label() + ' — обложка недоступна'">
         <svg class="icon" [lucideIcon]="imageOff" [size]="26" aria-hidden="true"/>
         <span>Обложка недоступна</span>
@@ -67,6 +67,7 @@ export class Cover {
   readonly titleKey = input<TitleKey>();
   readonly label = input.required<string>();
   readonly eager = input(false);
+  readonly showFallback = input(true);
   protected readonly imageOff = ImageOff;
   protected readonly alternateMangaDexCover = computed(() => {
     const key = this.titleKey();
@@ -74,9 +75,14 @@ export class Cover {
     return path ? '/api/v1/sources/mangadex/titles/' + path : undefined;
   });
   private readonly candidates = computed(() => {
-    const src = this.src();
+    const src = this.src()?.trim();
     const alternate = this.alternateMangaDexCover();
-    if (!src) return alternate ? [alternate] : [];
+    const key = this.titleKey();
+    if (key?.sourceId === 'mangakakalot') {
+      const cover = '/api/v1/sources/mangakakalot/titles/' + encodeURIComponent(key.externalTitleId) + '/cover';
+      return alternate ? [cover, alternate] : [cover];
+    }
+    if (!src) return [];
     // Library entries may still contain MangaDex CDN URLs saved before covers used the backend.
     const legacy = src.match(/^https:\/\/uploads\.mangadex\.org\/covers\/([a-f0-9-]{36})\/([a-z0-9][a-z0-9._-]{0,249})\.512\.jpg$/i);
     if (legacy) return [`/api/v1/sources/mangadex/titles/${legacy[1]}/covers/${legacy[2]}`];
@@ -84,11 +90,11 @@ export class Cover {
     // MangaLib's public catalogue lists thumbnails; the same cover without the suffix is the detail image.
     const thumbnail = src.match(/^(https:\/\/covers\.mixlib\.me\/uploads\/cover\/[a-z0-9._~-]+\/cover\/[a-z0-9-]+)_thumb(\.(?:jpe?g|png|webp)(?:\?[^#]*)?)$/i);
     if (thumbnail) return [thumbnail[1] + thumbnail[2], src];
-    return alternate ? [src, alternate] : [src];
+    return [src];
   });
   private readonly failed = linkedSignal({source: this.candidates, computation: () => new Set<string>()});
   protected readonly coverUrl = computed(() => this.candidates().find(url => !this.failed().has(url)));
-  protected readonly missing = computed(() => !this.coverUrl());
+  readonly missing = computed(() => !this.coverUrl());
 
   protected markFailed(url: string) {
     this.failed.update(previous => new Set(previous).add(url));

@@ -202,7 +202,7 @@ public class LocalCatalogService {
                 """).param("sources", sources).query(String.class).single());
     }
 
-    private void validateTags(String source, List<String> tags) {
+    void validateTags(String source, List<String> tags) {
         if (source == null) throw ApiException.catalogSourceRequired();
         if (!connections.requireConnectedAdapter(source).supportsTags()) throw ApiException.problem(
                 HttpStatus.UNPROCESSABLE_CONTENT, "CATALOG_OPTIONS_UNSUPPORTED", "Источник не поддерживает теги.");

@@ -5,7 +5,7 @@ import { Api, CatalogQuery, CatalogResponse, problem, TitleSummary } from './api
 interface SavedFeed { response: CatalogResponse; scroll: number; savedAt: number; }
 const keyOf = (query: CatalogQuery) => JSON.stringify(query);
 const unique = (items: TitleSummary[]) => [...new Map(items.map(item =>
-  [JSON.stringify([item.sourceId, item.externalTitleId]), item])).values()];
+  [item.workId ?? JSON.stringify([item.sourceId, item.externalTitleId]), item])).values()];
 
 @Injectable({providedIn: 'root'})
 export class CatalogCache {
@@ -15,7 +15,7 @@ export class CatalogCache {
   get(query: CatalogQuery) {
     const key = keyOf(query);
     let saved = this.entries.get(key);
-    try { saved ??= JSON.parse(this.window?.sessionStorage.getItem('kadr.catalog.' + key) ?? 'null'); } catch { /* Optional cache. */ }
+    try { saved ??= JSON.parse(this.window?.sessionStorage.getItem('kadr.catalog.works.' + key) ?? 'null'); } catch { /* Optional cache. */ }
     if (!saved || Date.now() - saved.savedAt > 10 * 60_000
       || (saved.response.page.expiresAt && Date.parse(saved.response.page.expiresAt) <= Date.now())) return undefined;
     return saved;
@@ -30,10 +30,15 @@ export class CatalogCache {
       while (this.entries.size > 6) {
         const oldest = this.entries.keys().next().value!;
         this.entries.delete(oldest);
-        this.window?.sessionStorage.removeItem('kadr.catalog.' + oldest);
+        this.window?.sessionStorage.removeItem('kadr.catalog.works.' + oldest);
       }
-      this.window?.sessionStorage.setItem('kadr.catalog.' + key, JSON.stringify(saved));
+      this.window?.sessionStorage.setItem('kadr.catalog.works.' + key, JSON.stringify(saved));
     } catch { /* Keep the in-memory copy if browser storage is full. */ }
+  }
+  remove(query:CatalogQuery) {
+    const key=keyOf(query);
+    this.entries.delete(key);
+    try {this.window?.sessionStorage.removeItem('kadr.catalog.works.'+key);}catch { /* Optional cache. */ }
   }
 }
 

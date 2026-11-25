@@ -87,7 +87,24 @@ class DownloadFiles {
     }
 
     void publish(UUID id) throws IOException {
+        if (!Files.exists(staging(id)) && Files.isDirectory(root.resolve(id.toString()),LinkOption.NOFOLLOW_LINKS)) return;
         Files.move(staging(id), root.resolve(id.toString()), StandardCopyOption.ATOMIC_MOVE);
+    }
+
+    boolean verified(UUID id, PageFile page) {
+        try {
+            Path file = staging(id).resolve(Path.of(page.storageKey()).getFileName());
+            if (!Files.isRegularFile(file,LinkOption.NOFOLLOW_LINKS)) file = root.resolve(page.storageKey());
+            return Files.isRegularFile(file,LinkOption.NOFOLLOW_LINKS) && Files.size(file) == page.sizeBytes()
+                    && digest(file).equals(page.sha256());
+        } catch (IOException invalid) { return false; }
+    }
+
+    void prepare(UUID id) throws IOException {
+        Path published = root.resolve(id.toString());
+        if (!Files.exists(staging(id)) && Files.isDirectory(published,LinkOption.NOFOLLOW_LINKS)) {
+            Files.move(published,staging(id),StandardCopyOption.ATOMIC_MOVE);
+        }
     }
 
     PageFile describe(UUID id, int index) throws IOException {

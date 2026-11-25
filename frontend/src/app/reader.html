@@ -1,7 +1,8 @@
 <app-skip-link label="К страницам"/>
 <header class="reader-bar" #bar>
   <div class="wrap bar">
-    <a class="back-link" [routerLink]="offline() ? '/library/downloads' : titleLink(key())">
+    <a class="back-link" [routerLink]="offline() ? '/library/downloads' : titleLink(readerTitle() ?? key())"
+      [queryParams]="offline() ? null : {chapterLanguage: language()}" [state]="{kadrTitleReturn:preview.pageReturn()}">
       <svg class="icon" [lucideIcon]="back" [size]="17" aria-hidden="true"/> Назад
     </a>
     <div class="reader-title">
@@ -14,9 +15,30 @@
   </div>
 </header>
 <div class="reader-dock-row">
-  <app-navigation-dock/>
+  @if (!panelsHidden()) { <app-navigation-dock/> }
+  <button class="button secondary compact" type="button" [attr.aria-expanded]="settingsOpen()"
+    (click)="settingsOpen.update(open => !open)">Настройки</button>
+  <button class="button secondary compact" type="button" (click)="panelsHidden.update(hidden => !hidden)">
+    {{ panelsHidden() ? 'Показать панели' : 'Скрыть панели' }}
+  </button>
 </div>
-<main id="main-content" class="paper" tabindex="-1">
+@if (settingsOpen()) {
+  <div class="wrap surface reader-options" aria-label="Настройки читалки">
+    <label>Режим <select [value]="settings().mode" (change)="updateSettings({mode: $any($event.target).value})">
+      <option value="vertical">Вертикальный / Webtoon</option><option value="paged">Постраничный</option>
+    </select></label>
+    <label>Ширина <select [value]="settings().width" (change)="updateSettings({width: +$any($event.target).value})">
+      <option value="560">560 px</option><option value="760">760 px</option><option value="960">960 px</option><option value="1200">1200 px</option>
+    </select></label>
+    <label>Предзагрузка <select [value]="settings().prefetch" (change)="updateSettings({prefetch: +$any($event.target).value})">
+      <option value="0">Только текущая</option><option value="1">1 страница</option><option value="2">2 страницы</option>
+    </select></label>
+    <label><input type="checkbox" [checked]="settings().rtl" (change)="updateSettings({rtl: $any($event.target).checked})"> Справа налево</label>
+    <label><input type="checkbox" [checked]="settings().keys" (change)="updateSettings({keys: $any($event.target).checked})"> Горячие клавиши</label>
+    <label><input type="checkbox" [checked]="overrideSettings()" (change)="toggleTitleSettings($any($event.target).checked)"> Только для этого тайтла</label>
+  </div>
+}
+<main id="main-content" class="paper" [style.max-width.px]="settings().width" tabindex="-1">
   @if (waiting()) {
     <app-state kind="loading" artwork message="Загружаем страницы…"/>
   } @else if (issue(); as issue) {
@@ -24,7 +46,7 @@
       <app-state kind="empty" [message]="issue.detail">
         <div class="actions">
           @for (language of issue.availableLanguages; track language) {
-            <a class="button secondary" [routerLink]="link(key(), chapterId(), language)">{{ lang(language) }}</a>
+            <a class="button secondary" [routerLink]="link(key(), chapterId(), language)" [state]="{kadrTitleReturn:preview.pageReturn()}">{{ lang(language) }}</a>
           }
         </div>
       </app-state>
@@ -35,7 +57,7 @@
           <a class="button secondary" routerLink="/library/downloads">В скачанные главы</a>
           @if (sourceId()) {
           @if (sourceId() && externalTitleId() && chapterId() && language()) {
-            <a class="button secondary" [routerLink]="link(key(), chapterId(), language())">Открыть онлайн</a>
+            <a class="button secondary" [routerLink]="link(key(), chapterId(), language())" [state]="{kadrTitleReturn:preview.pageReturn()}">Открыть онлайн</a>
           }
           }
         </div>
@@ -47,16 +69,33 @@
     <div class="page-meta">
       <span>{{ lang(chapter.language) }} @if (offline()) { · Офлайн }</span>
       @if (chapter.pageCount) { <span>Страница {{ current() + 1 }} из {{ chapter.pageCount }}</span> }
-      @if (entry()) {
-        <button class="button secondary compact" type="button" [disabled]="saving()" (click)="savePosition()">
-          Сохранить позицию
-        </button>
+      @if (!panelsHidden()) {
+        <button type="button" class="button secondary compact" [disabled]="bookmarkBusy()" (click)="bookmarkPage()">Закладка</button>
+        @if (bookmarkStatus()) { <span role="status">{{ bookmarkStatus() }}</span> }
       }
-      @if (saveFeedback()) { <span role="status">{{ saveFeedback() }}</span> }
+      @if (saveFeedback(); as feedback) {
+        @if (feedback.text) { <span role="status">{{ feedback.text }}</span> }
+        @if (feedback.conflict) {
+          <button class="button secondary compact" (click)="resolveProgress(true)">{{ feedback.refresh ? 'Обновить главу' : 'Сохранить мою позицию' }}</button>
+          @if (!feedback.refresh) {
+            <button class="button secondary compact" (click)="resolveProgress(false)">Использовать серверную</button>
+          }
+        }
+      }
+      @if (reading.error()) {
+        <button class="button secondary compact" (click)="reading.reload()">Повторить загрузку позиции</button>
+      }
     </div>
+    @if (paged()) {
+      <div class="actions page-turn" [attr.dir]="settings().rtl ? 'rtl' : 'ltr'">
+        <button class="button secondary compact" [disabled]="pageShown() === 0" (click)="changePage(-1)">Предыдущая страница</button>
+        <button class="button secondary compact" [disabled]="pageShown() >= chapter.pageCount - 1" (click)="changePage(1)">Следующая страница</button>
+      </div>
+    }
     @for (page of chapter.pages; track (downloadId() ?? 'online') + '/' + chapterId() + '/' + language() + '/' + page.index) {
       <app-page-image [src]="page.imageUrl" [source]="chapter.attribution.sourceUrl" [index]="page.index" (manifestChanged)="retryContent()"
-        [eager]="page.index <= targetPage()" [offline]="offline()" (settled)="markReady($event)"/>
+        [hidden]="paged() && pageShown() !== page.index" [permitted]="pagePermitted(page.index)" [eager]="pageEager(page.index)"
+        [offline]="offline()" (settled)="markReady($event)" (reset)="resetImage($event)"/>
     } @empty {
       <app-state kind="empty" message="В этой главе пока нет страниц."/>
     }
@@ -64,23 +103,23 @@
       <nav class="reader-links" aria-label="Соседние главы">
         @if (offline()) {
           @if (localNeighbours().previous; as previous) {
-            <a class="button secondary" [routerLink]="offlineLink(previous)">
+            <a class="button secondary" [routerLink]="offlineLink(previous)" [state]="{kadrTitleReturn:preview.pageReturn()}">
               <svg class="icon" [lucideIcon]="back" [size]="16" aria-hidden="true"/> Предыдущая скачанная глава
             </a>
           }
           @if (localNeighbours().next; as following) {
-            <a class="button primary next-chapter" [routerLink]="offlineLink(following)">
+            <a class="button primary next-chapter" [routerLink]="offlineLink(following)" [state]="{kadrTitleReturn:preview.pageReturn()}">
               Следующая скачанная глава <svg class="icon" [lucideIcon]="next" [size]="16" aria-hidden="true"/>
             </a>
           } @else { <p class="muted">Дальше скачанных глав на этом языке нет.</p> }
         } @else {
           @if (chapter.previousChapterId; as previous) {
-          <a class="button secondary" [routerLink]="link(key(), previous, chapter.language)">
+          <a class="button secondary" [routerLink]="link(key(), previous, chapter.language)" [state]="{kadrTitleReturn:preview.pageReturn()}">
             <svg class="icon" [lucideIcon]="back" [size]="16" aria-hidden="true"/> Предыдущая глава
           </a>
           }
           @if (chapter.nextChapterId; as following) {
-          <a class="button primary next-chapter" [routerLink]="link(key(), following, chapter.language)">
+          <a class="button primary next-chapter" [routerLink]="link(key(), following, chapter.language)" [state]="{kadrTitleReturn:preview.pageReturn()}">
             Следующая глава <svg class="icon" [lucideIcon]="next" [size]="16" aria-hidden="true"/>
           </a>
           }
@@ -112,7 +151,7 @@
         <li class="chapter-row">
           <span class="chapter-number">{{ chapterLabel(item) }}</span>
           <h3>{{ item.chapterTitle ?? item.chapterId }}</h3>
-          <a class="button secondary compact" [routerLink]="offlineLink(item)"
+          <a class="button secondary compact" [routerLink]="offlineLink(item)" [state]="{kadrTitleReturn:preview.pageReturn()}"
             [attr.aria-current]="item.id === downloadId() ? 'page' : null" (click)="closeChapters()">{{ lang(item.language) }}</a>
         </li>
       } @empty { <li><app-state kind="empty" message="Скачанные главы недоступны."/></li> }
@@ -129,7 +168,7 @@
           <h3>{{ chapter.title }}</h3>
           <div class="chapter-languages">
             @for (langCode of chapter.languages; track langCode) {
-              <a class="button secondary compact" [routerLink]="link(key(), chapter.id, langCode)"
+              <a class="button secondary compact" [routerLink]="link(key(), chapter.id, langCode)" [state]="{kadrTitleReturn:preview.pageReturn()}"
                 [attr.aria-current]="chapter.id === chapterId() && langCode === language() ? 'page' : null"
                 [attr.aria-label]="chapter.title + ' — ' + lang(langCode)" (click)="closeChapters()">
                 {{ langCode.toUpperCase() }}

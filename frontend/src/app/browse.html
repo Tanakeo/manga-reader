@@ -3,6 +3,7 @@
     <div>
       <h1 class="page-heading">Обзор</h1>
       <p>Подключайте сайты и открывайте их каталоги.</p>
+      <a class="button secondary compact" routerLink="/local/import">Импорт комикса</a>
     </div>
     <app-command-search [value]="searchQuery()" caption="Найти сайт" placeholder="Название источника…"
       [label]="activeTab() === 'sources' ? 'Поиск по источникам' : 'Поиск по расширениям'" (search)="setSearch($event)"/>

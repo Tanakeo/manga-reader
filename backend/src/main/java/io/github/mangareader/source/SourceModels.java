@@ -5,6 +5,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 public final class SourceModels {
     private SourceModels() {}
@@ -26,13 +27,25 @@ public final class SourceModels {
 
     public record SourceTitleSummary(String sourceId, String externalTitleId, String sourceName,
                                      String title, String author, String coverUrl, String titleRu, String titleEn,
-                                     String publicationStatus, Integer releaseYear) {}
+                                     String publicationStatus, Integer releaseYear, UUID workId) {
+        public SourceTitleSummary(String sourceId,String externalTitleId,String sourceName,String title,String author,
+                                  String coverUrl,String titleRu,String titleEn,String publicationStatus,Integer releaseYear) {
+            this(sourceId,externalTitleId,sourceName,title,author,coverUrl,titleRu,titleEn,publicationStatus,releaseYear,null);
+        }
+    }
 
     public record SourceTitle(String sourceId, String externalTitleId, String sourceName, String title,
                               String author, String coverUrl, String description, String sourceUrl,
                               License license, String titleRu, String titleEn, String publicationStatus,
                               Integer releaseYear, List<Tag> tags, @JsonIgnore Integer tagsVersion,
-                              @JsonIgnore Instant tagsFetchedAt) {
+                              @JsonIgnore Instant tagsFetchedAt, @JsonIgnore Identity identity) {
+        public SourceTitle(String sourceId, String externalTitleId, String sourceName, String title,
+                           String author, String coverUrl, String description, String sourceUrl, License license,
+                           String titleRu, String titleEn, String publicationStatus, Integer releaseYear,
+                           List<Tag> tags, Integer tagsVersion, Instant tagsFetchedAt) {
+            this(sourceId, externalTitleId, sourceName, title, author, coverUrl, description, sourceUrl, license,
+                    titleRu, titleEn, publicationStatus, releaseYear, tags, tagsVersion, tagsFetchedAt, null);
+        }
         public SourceTitle(String sourceId, String externalTitleId, String sourceName, String title,
                            String author, String coverUrl, String description, String sourceUrl,
                            License license, String titleRu, String titleEn, String publicationStatus,
@@ -49,6 +62,10 @@ public final class SourceModels {
                     titleRu, titleEn, publicationStatus, releaseYear);
         }
     }
+
+    public record Alias(String name, String language) {}
+    public record Identity(List<Alias> aliases, Map<String,String> identifiers,
+                           String originalLanguage, String kind, String edition) {}
 
     public record ChapterCount(int chapterCount) {}
 

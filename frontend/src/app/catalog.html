@@ -1,4 +1,6 @@
+@if (showcaseView()) { <app-showcase/> } @else {
 <main id="main-content" class="wrap catalog" tabindex="-1">
+  <nav class="work-tabs" aria-label="Вид каталога"><a routerLink="/catalog" [queryParams]="{view:'showcase'}">Подборки</a><a class="active" routerLink="/catalog" [queryParams]="{view:'works'}" aria-current="page">Все манги</a></nav>
   <div class="intro">
     <div>
       <h1 class="page-heading" tabindex="-1">Каталог</h1>
@@ -160,19 +162,20 @@
           </a>
         </div>
         <a class="feature-art" [titlePreview]="item" [attr.aria-label]="'Открыть ' + name" [routerLink]="titleLink(item)" [queryParams]="titleContext()">
-          <app-cover [src]="item.coverUrl" [titleKey]="item" [label]="'Обложка ' + name" [eager]="true"/>
+          <app-cover [src]="item.coverUrl" [titleKey]="item" [label]="'Обложка ' + name" [eager]="true" [showFallback]="false"/>
         </a>
       </article>
     } @else if (result.value().length) {
       <div class="catalog-grid">
-        @for (item of result.value(); track item.sourceId + '/' + item.externalTitleId) {
+        @for (item of result.value(); track item.workId ?? item.sourceId + '/' + item.externalTitleId) {
           <article class="catalog-card" data-title-card>
             <a [titlePreview]="item" [routerLink]="titleLink(item)" [queryParams]="titleContext()" [attr.aria-label]="'Открыть ' + (item | localizedTitle:titleLanguage())">
-            <app-cover [src]="item.coverUrl" [titleKey]="item" label=""/>
+              <app-cover [src]="item.coverUrl" [titleKey]="item.coverTitle ?? item" label="" [showFallback]="false"/>
             </a>
             <div>
               <h2><a [titlePreview]="item" [routerLink]="titleLink(item)" [queryParams]="titleContext()">{{ item | localizedTitle:titleLanguage() }}</a></h2>
               <p class="muted">{{ item.sourceName }}</p>
+              <app-work-facts [item]="item"/>
               <app-catalog-facts [item]="item" [language]="query().chapterLanguages?.length === 1 ? query().chapterLanguages![0] : ''"/>
             </div>
           </article>
@@ -187,25 +190,31 @@
         ? 'По вашему запросу ничего не найдено.' : 'Каталог пока пуст.'">
       </app-state>
     }
+    @if (result.value().length && !visibleCount()) {
+      <app-state kind="empty" message="Среди загруженных тайтлов нет доступных обложек."/>
+    }
     <div class="inventory">
-      <span>{{ countLabel(currentPage()?.total ?? result.value().length) }}</span>
-      @if (featured(); as item) { <span>Источник <b>{{ item.sourceName }}</b></span> }
+      <span>{{ countLabel(visibleCount()) }}</span>
+      @if (visibleCount()) {
+        @if (featured(); as item) { <span>Источник <b>{{ item.sourceName }}</b></span> }
+      }
     </div>
     @if (currentPage()?.hasMore) {
       <button class="button secondary" type="button" [disabled]="loadingMore()" (click)="loadMore()">
         {{ loadingMore() ? 'Загружаем…' : moreError() ? 'Повторить подгрузку' : 'Показать ещё' }}
       </button>
-    } @else if (result.value().length) {
+    } @else if (visibleCount()) {
       <p class="muted catalog-end" role="status">Все тайтлы этой выдачи показаны.</p>
     }
     @if (moreError()) { <p class="feedback error" role="alert">{{ moreError() }}</p> }
   }
 </main>
-@if (detail.hasValue() && detail.value().license; as license) {
+@if (visibleCount() && detail.hasValue() && detail.value().license; as license) {
   <footer class="wrap site-footer">
     <a class="footer-brand" routerLink="/catalog">Кадр<span class="accent">.</span></a>
     <span>Иллюстрация @if (detail.value().author) { © {{ detail.value().author }} · }
       <a [href]="license.url" target="_blank" rel="noopener noreferrer">{{ license.code }}</a>
     </span>
   </footer>
+}
 }

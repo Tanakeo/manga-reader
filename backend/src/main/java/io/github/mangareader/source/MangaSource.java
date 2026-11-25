@@ -32,6 +32,7 @@ public interface MangaSource {
 
     default PublicSourceClient.Image serverImage(String title, String chapter, String language, int index) { return null; }
     default List<java.net.URI> alternativeImages(java.net.URI original) { return List.of(); }
+    default String imageReferer(String chapterUrl) { return chapterUrl; }
 
     List<SourceTitle> searchTitles(String query);
     default List<SourceTitle> searchTitles(String query, List<String> tagIds, String sort) {

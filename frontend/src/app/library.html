@@ -53,6 +53,9 @@
     <header class="library-content-head">
       <div class="library-heading">
         <h1 class="page-heading" id="active-section-heading" #heading tabindex="-1">{{ sectionTitle() }}</h1>
+        <a class="button secondary compact" routerLink="/library/history">История чтения</a>
+        <a class="button secondary compact" routerLink="/library/updates">Новые главы</a>
+        <a class="button secondary compact" routerLink="/library/backup">Резервная копия</a>
         @if (isDownloads()) {
           <span class="count" aria-label="Скачанных глав">{{ downloads.items().length }}</span>
         } @else if (entries.hasValue() && !unresolved()) {
@@ -106,7 +109,8 @@
     } @else if (visibleEntries().length) {
       @for (key of [activeKey()]; track key) {
         <div class="library-grid">
-          @for (entry of visibleEntries(); track entry.id) {
+          @for (group of workEntries(); track group[0].title.workId || group[0].id) {
+            @let entry = group[0];
             @let name = entry.title | localizedTitle:titleLanguage();
             <article class="surface library-tile" data-title-card>
               <a class="library-art" [titlePreview]="entry.title" [routerLink]="titleLink(entry.title)" [attr.aria-label]="'Открыть ' + name">
@@ -121,6 +125,7 @@
                     </summary>
                     <div class="library-menu">
                       <button type="button" aria-haspopup="dialog" (click)="open({kind: 'edit', entry}, $event)">Изменить</button>
+                      <a [routerLink]="['/library/transfer',entry.id]">Перенести в другой источник</a>
                       @if (custom(); as section) {
                         <button type="button" aria-haspopup="dialog"
                           (click)="open({kind: 'remove-entry', entry, section}, $event)">Убрать из секции</button>
@@ -131,6 +136,22 @@
                   </details>
                 </div>
                 <p class="meta">{{ entry.title.sourceName }}</p>
+                @if (group.length > 1) {
+                  <details class="library-note library-source-records">
+                    <summary>{{ group.length }} записи из источников</summary>
+                    @for (record of group; track record.id) {
+                      <div>
+                        <p>{{ record.title.sourceName }} · {{ statuses[record.status] }}</p>
+                        @if (record.note) { <p class="muted">{{ record.note }}</p> }
+                        @if (record.progress; as progress) {
+                          <a class="text-link" [routerLink]="readerLink(record.title,progress.chapterId,progress.language)" [queryParams]="downloads.continueParams(record.title,progress)">Продолжить · {{ lang(progress.language) }} · Стр. {{ progress.pageIndex + 1 }}</a>
+                        }
+                        <button class="button secondary compact" (click)="open({kind:'edit',entry:record},$event)">Изменить запись</button>
+                        <button class="button secondary compact" (click)="open({kind:'delete-entry',entry:record},$event)">Удалить запись</button>
+                      </div>
+                    }
+                  </details>
+                }
                 @if (!builtIn()) { <span class="status-tag">{{ statuses[entry.status] }}</span> }
                 @if (entry.note) {
                   <details class="library-note">

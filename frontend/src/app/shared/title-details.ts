@@ -18,10 +18,10 @@ export class TitleDetails {
   }
 
   load(key: TitleKey) {
-    const id = JSON.stringify([key.sourceId, key.externalTitleId]);
+    const id = JSON.stringify([key.workId, key.sourceId, key.externalTitleId]);
     const cached = this.requests.get(id);
     if (cached && Date.now() - cached.at < 60_000) return cached.request;
-    const request = this.api.title(key).pipe(
+    const request = (key.workId ? this.api.work(key.workId) : this.api.title(key)).pipe(
       tap(title => this.remember(title)),
       shareReplay({bufferSize: 1, refCount: true}),
     );

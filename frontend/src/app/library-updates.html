@@ -1,0 +1,33 @@
+<main class="wrap section-page" id="main-content" tabindex="-1">
+  <a class="back-link" routerLink="/library">← Библиотека</a>
+  <h1 class="page-heading">Новые главы</h1>
+  <div class="actions">
+    <label class="catalog-sort">Язык
+      <select [value]="language()" [disabled]="pending()" (change)="filter($event)">
+        <option value="">Все</option><option value="ru">Русский</option><option value="en">Английский</option>
+      </select>
+    </label>
+    <span class="muted">Непрочитанных выпусков: {{ count() }}</span>
+    <button class="button secondary compact" [disabled]="pending()" (click)="load()">Обновить</button>
+  </div>
+  @if (issue()) { <app-state kind="error" [message]="issue()" (retry)="load()"/> }
+  @else if (pending() && !items().length) { <app-state kind="loading" message="Загружаем обновления…"/> }
+  @else if (!items().length) { <app-state kind="empty" message="Новых глав пока нет."/> }
+  <ol class="chapter-list">
+    @for (item of items(); track item.id) {
+      <li class="chapter-row update-row">
+        <div>
+          <h3><a [routerLink]="title(item)">{{ (locale() === 'ru' ? item.titleRu : item.titleEn) || item.title }}</a></h3>
+          <p>{{ item.chapterTitle }} · {{ lang(item.language) }} · {{ item.isRead ? 'Прочитано' : 'Новое' }}</p>
+          <p class="muted">Найдено {{ item.discoveredAt | date:'dd.MM.yyyy HH:mm' }}
+            @if (item.publishedAt) { · Опубликовано {{ item.publishedAt | date:'dd.MM.yyyy' }} }
+          </p>
+        </div>
+        <a class="button primary compact" [routerLink]="reader(item,item.chapterId,item.language)">Читать</a>
+      </li>
+    }
+  </ol>
+  @if (cursor(); as next) {
+    <button class="button secondary" [disabled]="pending()" (click)="load(next)">Показать ещё</button>
+  }
+</main>

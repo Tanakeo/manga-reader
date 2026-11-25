@@ -44,8 +44,17 @@
             <a [href]="license.url" target="_blank" rel="noopener noreferrer">{{ license.code }}</a>
           }
         </div>
-        @if (firstChapter(); as first) {
-          <a class="button primary" magneticButton [routerLink]="readerLink(item, first.id, defaultLanguage(first.languages))">
+        @if (resume(); as position) {
+          <a class="button primary" magneticButton [routerLink]="readerLink(item, position.chapterId, position.language)" [state]="readingState()"
+             [queryParams]="{page: position.pageIndex + 1, downloadId: position.downloadId}">
+            <span class="magnetic-content">Продолжить чтение · {{ lang(position.language) }} · стр. {{ position.pageIndex + 1 }}</span>
+          </a>
+          @if (firstChapter(); as first) {
+            <a class="button secondary" [routerLink]="readerLink(item, first.id, defaultLanguage(first.languages))" [state]="readingState()"
+               [queryParams]="{page: 1}">Начать сначала</a>
+          }
+        } @else if (firstChapter(); as first) {
+          <a class="button primary" magneticButton [routerLink]="readerLink(item, first.id, defaultLanguage(first.languages))" [state]="readingState()">
             <span class="magnetic-content"><svg class="icon" [lucideIcon]="book" [size]="18" aria-hidden="true"/> Начать читать</span>
           </a>
         }
@@ -70,6 +79,7 @@
       <section class="chapters" id="chapters" aria-labelledby="chapter-heading">
         <div class="section-heading chapter-heading">
           <h2 id="chapter-heading">Главы</h2>
+          @if (readingIssue()) { <p role="alert" class="error">{{ readingIssue() }}</p> }
           @if (chapterCheck()?.chapterCount !== null && chapterCheck()?.chapterCount !== undefined) {
             <span class="count">{{ chapterCheck()?.chapterCount }}</span>
           }
@@ -88,6 +98,34 @@
         } @else if (chapters.error(); as error) {
           <app-state kind="error" [message]="problem(error).detail" (retry)="chapters.reload()"/>
         } @else if (chapters.hasValue()) {
+          <div class="actions">
+            <button class="button secondary compact" [attr.aria-pressed]="batchMode()"
+              (click)="batchMode.update(value => !value)">Выбрать главы</button>
+            @if (batchMode()) {
+              <span class="muted">Выбрано: {{ selectedEditions().size }} / 100</span>
+              <button class="button secondary compact" [disabled]="batchBusy() || !selectedEditions().size" (click)="runBatch('read')">Прочитано</button>
+              <button class="button secondary compact" [disabled]="batchBusy() || !selectedEditions().size" (click)="runBatch('unread')">Не прочитано</button>
+              <button class="button secondary compact" [disabled]="batchBusy() || !selectedEditions().size" (click)="runBatch('bookmark')">Добавить закладки</button>
+              <button class="button secondary compact" [disabled]="batchBusy() || !selectedEditions().size" (click)="runBatch('unbookmark')">Убрать закладки</button>
+              @if (downloadSupported()) {
+                <button class="button secondary compact" [disabled]="batchBusy() || !selectedEditions().size" (click)="runBatch('download')">Скачать выбранные</button>
+              }
+            }
+          </div>
+          @for (message of batchFeedback(); track $index) { <p role="status">{{ message }}</p> }
+          @if (bookmarks.hasValue() && bookmarks.value().length) {
+            <details>
+              <summary>Закладки ({{ bookmarks.value().length }})</summary>
+              <ul>
+                @for (bookmark of bookmarks.value(); track bookmark.chapterId + '/' + bookmark.language) {
+                  <li><a [routerLink]="readerLink(item,bookmark.chapterId,bookmark.language)" [state]="readingState()"
+                    [queryParams]="downloads.continueParams(item,{chapterId:bookmark.chapterId,language:bookmark.language,pageIndex:bookmark.pageIndex ?? 0})">
+                    {{ bookmark.chapterId }} · {{ lang(bookmark.language) }} @if(bookmark.pageIndex !== null) { · стр. {{ bookmark.pageIndex + 1 }} }
+                  </a></li>
+                }
+              </ul>
+            </details>
+          }
           @if (chapterCheck()?.state === 'PARTIAL' || chapterCheck()?.state === 'ERROR') {
             <p class="feedback" role="status">Проверка глав неполная. Показаны уже найденные переводы.</p>
           }
@@ -118,11 +156,26 @@
                 </div>
                 <div class="chapter-languages">
                   @for (language of chapter.languages; track language) {
-                    <a class="button secondary compact" [routerLink]="readerLink(item, chapter.id, language)"
+                    @if (batchMode()) {
+                      <label>
+                        <input type="checkbox" [checked]="editionSelected(chapter.id,language)"
+                          [disabled]="batchBusy() || (!editionSelected(chapter.id,language) && selectedEditions().size >= 100)"
+                          (change)="selectEdition(chapter.id,language,$any($event.target).checked)">
+                        {{ language.toUpperCase() }}
+                      </label>
+                    }
+                    <a class="button secondary compact" [routerLink]="readerLink(item, chapter.id, language)" [state]="readingState()"
                       [attr.aria-label]="chapter.title + ' — ' + lang(language)">
                       {{ language.toUpperCase() }}
                       <svg class="icon" [lucideIcon]="chevron" [size]="14" aria-hidden="true"/>
                     </a>
+                    @if (reading.hasValue()) {
+                      <button class="button secondary compact" [disabled]="readingBusy()"
+                        [attr.aria-label]="(readChapters().has(chapter.id + '/' + language) ? 'Отметить непрочитанной' : 'Отметить прочитанной') + ' · ' + chapter.title + ' · ' + lang(language)"
+                        [attr.aria-pressed]="readChapters().has(chapter.id + '/' + language)" (click)="markRead(chapter.id, language)">
+                        {{ readChapters().has(chapter.id + '/' + language) ? 'Прочитано' : 'Отметить' }}
+                      </button>
+                    }
                   } @empty { <span class="muted">Перевод недоступен</span> }
                 </div>
                 @if (downloadSupported() && chapter.languages.length) {

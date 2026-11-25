@@ -2,7 +2,7 @@ import { DOCUMENT, inject, Injectable, signal, DestroyRef } from '@angular/core'
 import { Location } from '@angular/common';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { NavigationEnd, NavigationError, NavigationCancel, NavigationStart, Router, Scroll } from '@angular/router';
-import { TitleKey, TitleSummary, sameTitle } from '../api';
+import { TitleKey, TitleSummary, WorkSource, sameTitle } from '../api';
 import { TitleDetails } from './title-details';
 
 export interface PreviewOrigin {
@@ -31,7 +31,7 @@ export interface PreviewSelection {
 }
 
 export function previewKey(key: TitleKey) {
-  return JSON.stringify([key.sourceId, key.externalTitleId]);
+  return key.workId ? JSON.stringify(['work',key.workId]) : JSON.stringify([key.sourceId, key.externalTitleId]);
 }
 
 export function findPreviewTrigger(document: Document, context: TitleReturn) {
@@ -112,7 +112,8 @@ export class TitlePreviewState {
     this.dismissing = false;
     this.selection.set(this.last);
     const tree = this.router.parseUrl(base);
-    tree.queryParams = {...tree.queryParams, previewSource: summary.sourceId, previewTitle: summary.externalTitleId};
+    tree.queryParams = {...tree.queryParams, previewSource: summary.sourceId, previewTitle: summary.externalTitleId,
+      previewWork:summary.workId ?? null};
     void this.router.navigateByUrl(tree, {state: {kadrPreviewOrigin: base}});
   }
 
@@ -140,6 +141,16 @@ export class TitlePreviewState {
       this.openingPage.set(false);
       this.navigationIssue.set('Не удалось открыть страницу. Попробуйте ещё раз.');
     });
+  }
+
+  goToSource(source:WorkSource) {
+    const selected=this.selection();
+    if(!selected?.key.workId)return;
+    const tree=this.router.parseUrl(selected.target);
+    tree.queryParams={...tree.queryParams,source:source.titleId};
+    this.selection.set({...selected,key:{...source,workId:selected.key.workId},
+      summary:{...selected.summary,...source,workId:selected.key.workId},target:this.router.serializeUrl(tree)});
+    this.goToPage();
   }
 
   pageFinished() {
@@ -177,12 +188,12 @@ export class TitlePreviewState {
     const externalTitleId = tree.queryParams['previewTitle'];
     const path = tree.root.children['primary']?.segments.map(segment => segment.path).join('/') ?? '';
     if (sourceId && externalTitleId && (path === 'catalog' || path === 'library')) {
-      const key = {sourceId: String(sourceId), externalTitleId: String(externalTitleId)};
+      const key = {sourceId: String(sourceId), externalTitleId: String(externalTitleId),workId:tree.queryParams['previewWork'] || undefined};
       if (this.selection() && sameTitle(this.selection()!.key, key)) return;
       this.selection.set(this.last && sameTitle(this.last.key, key) ? this.last : {
         key, returnTo: {url: this.withoutPreview(url), position: [0, 0], key: previewKey(key), titleLink: false,
           historyEntry: this.window?.history.state?.kadrPreviewOrigin === this.withoutPreview(url)},
-        target: this.router.serializeUrl(this.router.createUrlTree(['/catalog', key.sourceId, key.externalTitleId])),
+        target: this.router.serializeUrl(this.router.createUrlTree(key.workId ? ['/catalog','works',key.workId] : ['/catalog',key.sourceId,key.externalTitleId])),
       });
     } else if (this.openingPage() && url !== this.selection()?.target) {
       this.openingPage.set(false);
@@ -197,6 +208,7 @@ export class TitlePreviewState {
     const tree = this.router.parseUrl(url);
     delete tree.queryParams['previewSource'];
     delete tree.queryParams['previewTitle'];
+    delete tree.queryParams['previewWork'];
     return this.router.serializeUrl(tree);
   }
 

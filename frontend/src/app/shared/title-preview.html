@@ -3,7 +3,7 @@
   <div #surface class="morph-surface" aria-hidden="true"></div>
   <div class="morph-actors" [class.resting]="!moving()" aria-hidden="true">
     <div #coverActor class="morph-cover">
-      <app-cover [src]="imageUrl()" [titleKey]="displayed()?.key" label="" [eager]="true"/>
+      <app-cover [src]="imageUrl()" [titleKey]="item()?.coverTitle ?? displayed()?.key" label="" [eager]="true"/>
     </div>
     <div #titleActor class="morph-title">
       {{ (item() | localizedTitle:language()) || 'Манга' }}
@@ -14,12 +14,23 @@
       <button class="button secondary icon-button preview-close" type="button" autofocus aria-label="Закрыть превью"
         (click)="state.dismiss()"><svg [lucideIcon]="closeIcon" [size]="20" aria-hidden="true"/></button>
       <div #coverSlot class="preview-cover">
-        <app-cover [src]="imageUrl()" [titleKey]="selected.key" [label]="'Обложка ' + (item() | localizedTitle:language())" [eager]="true"/>
+        <app-cover [src]="imageUrl()" [titleKey]="item()?.coverTitle ?? selected.key" [label]="'Обложка ' + (item() | localizedTitle:language())" [eager]="true"/>
       </div>
       <div class="preview-info">
         <p class="eyebrow">{{ item()?.sourceName ?? 'Превью тайтла' }}</p>
         <h2 #heading id="title-preview-heading" class="preview-heading">{{ (item() | localizedTitle:language()) || 'Манга' }}</h2>
         <div class="preview-scroll">
+          @if (item(); as work) {
+            @if (work.workId) {
+              <app-work-facts [item]="work"/>
+              <div class="work-preview-sources" aria-label="Выбрать источник чтения">
+                @for (source of work.sources ?? []; track source.titleId) {
+                  <a class="button secondary compact" [routerLink]="['/catalog','works',work.workId]" [queryParams]="{source:source.titleId,chapterLanguage:chapterLanguage() || null}" [attr.aria-disabled]="selectingSource()" (click)="chooseSource($event,source)">{{ source.sourceName }} · {{ source.supportedLanguages.join(', ') }}</a>
+                }
+              </div>
+              @if(sourceIssue()) { <p class="error" role="alert">{{ sourceIssue() }}</p> }
+            }
+          }
           @if (item(); as title) {
             @if (title.author) { <p class="muted">{{ title.author }}</p> }
             <app-catalog-facts [item]="title" [availability]="availability()" [language]="chapterLanguage()"/>

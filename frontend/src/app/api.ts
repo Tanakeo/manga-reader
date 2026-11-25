@@ -5,7 +5,22 @@ import { catchError, defer, EMPTY, expand, from, map, mergeMap, Observable, retr
 export interface TitleKey {
   sourceId: string;
   externalTitleId: string;
+  workId?: string;
 }
+
+export interface LibraryUpdateItem extends TitleKey {
+  id: number; title: string; titleRu: string | null; titleEn: string | null;
+  chapterId: string; chapterTitle: string; language: string; isRead: boolean;
+  publishedAt: string | null; discoveredAt: string;
+}
+export interface LocalImportResult extends TitleKey {
+  chapterId: string; language: string; pageCount: number; duplicate: boolean;
+}
+export interface ChapterBookmark {chapterId:string;language:string;pageIndex:number|null}
+export type ChapterAction = 'bookmark' | 'unbookmark' | 'read' | 'unread' | 'download';
+export interface ChapterActionResult {item:ChapterBookmark;success:boolean;code:string|null;detail:string|null}
+export interface BackupPreview {entries:number;sections:number;chapters:number;bookmarks:number;conflicts:number}
+export interface TransferPreview {status:ReadingStatus;note:string|null;progress:Progress|null;targetInLibrary:boolean}
 
 export interface SourceIdentity {
   sourceId: string;
@@ -23,6 +38,12 @@ export interface Extension extends SourceIdentity {
 }
 
 export interface TitleSummary extends TitleKey {
+  description?: string | null;
+  version?: number;
+  selectedTitleId?: string;
+  coverTitle?: TitleKey | null;
+  sources?: WorkSource[];
+  metrics?: WorkMetric[];
   sourceName: string;
   title: string;
   author: string | null;
@@ -35,12 +56,51 @@ export interface TitleSummary extends TitleKey {
   latestChapterAt?: string | null;
 }
 
+export interface WorkSource extends TitleSummary {
+  titleId: string;
+  connected: boolean;
+  supportedLanguages: string[];
+}
+export interface WorkMetric {
+  provider: string;
+  providerExternalId: string;
+  metric: 'FOLLOWERS' | 'RATING_BAYESIAN' | 'RATING_MEAN';
+  value: number | null;
+  scaleMax: number | null;
+  sampleSize: number | null;
+  fetchedAt: string;
+  stale: boolean;
+  state: 'AVAILABLE' | 'STALE' | 'MISSING' | 'ERROR';
+}
+export interface WorkDetail extends TitleDetail {
+  workId: string;
+  allSources: WorkSource[];
+  preference: {titleId: string; language: string | null; version: number} | null;
+  libraryEntries: {id: string; title_id: string; status: ReadingStatus; note: string | null}[];
+  relatedWorks?: string[];
+}
+export interface Collection extends CatalogResponse {
+  id: string;
+  title: string;
+  basis: string;
+  tagId?: string;
+  state: 'READY' | 'EMPTY' | 'STALE' | 'UNAVAILABLE';
+}
+export interface ShowcaseResponse {
+  generatedAt: string;
+  collections: Collection[];
+  partial: boolean;
+  providerStates: {provider: string; availableMetrics: number; queuedTitles: number; lastSuccessAt: string | null;
+    stale: boolean; error: SourceError | null}[];
+}
+
 interface License {
   code: string;
   url: string;
 }
 
 export interface TitleDetail extends TitleSummary {
+  preference?: {titleId:string;language:string|null;version:number} | null;
   metadataError?: {code: string; detail: string; stage: string};
   description: string | null;
   sourceUrl: string;
@@ -133,7 +193,7 @@ export interface Download {
   chapterTitle: string | null;
   chapterNumber: number | null;
   language: string;
-  status: 'QUEUED' | 'DOWNLOADING' | 'READY' | 'FAILED' | 'DELETING';
+  status: 'QUEUED' | 'DOWNLOADING' | 'PAUSED' | 'READY' | 'FAILED' | 'DELETING';
   pagesDone: number;
   totalPages: number | null;
   error: {code: string; detail: string} | null;
@@ -164,12 +224,64 @@ export interface Progress {
   pageIndex: number;
 }
 
+export interface ReadingResume extends Progress { downloadId: string | null; }
+export interface ChapterReadState {
+  chapterId: string;
+  language: string;
+  pageIndex: number | null;
+  pageCount: number | null;
+  maxSeenPageIndex: number | null;
+  seenPageIndexes: number[];
+  isRead: boolean;
+  completedAt: string | null;
+  lastReadAt: string | null;
+  activeSeconds: number;
+  origin: 'ONLINE' | 'OFFLINE' | 'LEGACY' | null;
+}
+export interface ReadingState {
+  revision: string;
+  resume: ReadingResume | null;
+  chapters: ChapterReadState[];
+}
+export interface ReadingSession { sessionId: string; revision: string; resume: ReadingResume | null; }
+export interface ReadingSample extends Progress {
+  downloadId: string | null;
+  manifestVersion: string | null;
+  seenPageIndexes: number[];
+  reachedEnd: boolean;
+  activeSecondsDelta: number;
+}
+export interface ReadingEvent extends ReadingSample {
+  eventId: string;
+  sessionId: string;
+  sequence: number;
+  expectedRevision: string;
+}
+export interface ReadingSaved {
+  applied: boolean;
+  revision: string;
+  resume: ReadingResume | null;
+  chapter: ChapterReadState | null;
+}
+export interface ReadingHistoryItem extends ReadingResume {
+  title: TitleSummary;
+  chapterTitle: string;
+  isRead: boolean;
+  lastReadAt: string;
+  origin: ChapterReadState['origin'];
+}
+export interface ReadingHistory {
+  items: ReadingHistoryItem[];
+  page: {hasMore: boolean; nextCursor: string | null};
+}
+
 export interface LibraryEntry {
   id: string;
   title: TitleSummary;
   status: ReadingStatus;
   note: string | null;
   progress: Progress | null;
+  readingRevision: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -189,6 +301,7 @@ export interface LibraryUpdate {
   status?: ReadingStatus;
   note?: string | null;
   progress?: Progress | null;
+  expectedReadingRevision?: string;
 }
 
 export interface Problem {
@@ -226,7 +339,7 @@ export function languageName(code: string) {
 }
 
 export function titleLink(key: TitleKey) {
-  return ['/catalog', key.sourceId, key.externalTitleId];
+  return key.workId ? ['/catalog','works',key.workId] : ['/catalog', key.sourceId, key.externalTitleId];
 }
 
 export function readerLink(key: TitleKey, chapterId: string, language: string) {
@@ -268,7 +381,7 @@ export class Api {
   }
 
   catalog({q, sourceId, tagIds, sort, chapterLanguages}: CatalogQuery, cursor?: string) {
-    let params = new HttpParams();
+    let params = new HttpParams().set('view', 'works');
     if (q) params = params.set('q', q);
     if (sourceId) params = params.set('sourceId', sourceId);
     if (sort) params = params.set('sort', sort);
@@ -276,6 +389,25 @@ export class Api {
     for (const language of chapterLanguages ?? []) params = params.append('chapterLanguage', language);
     if (cursor) params = params.set('cursor', cursor);
     return this.http.get<CatalogResponse>(this.base + '/catalog', {params: params.set('limit', 24)});
+  }
+
+  work(id: string, language = '') {
+    return this.http.get<WorkDetail>(this.base + '/works/' + encodeURIComponent(id),
+      {params: language ? {chapterLanguage: language} : {}});
+  }
+
+  preferSource(id: string, titleId: string, language: string | null, expectedVersion: number) {
+    return this.http.put<WorkDetail>(this.base + '/works/' + encodeURIComponent(id) + '/source-preference',
+      {titleId, language, expectedVersion});
+  }
+
+  showcase(language = '') {
+    return this.http.get<ShowcaseResponse>(this.base + '/showcase', {params: language ? {chapterLanguage: language} : {}});
+  }
+
+  collection(id: string, language = '', tagId = '', cursor = '') {
+    return this.http.get<Collection>(this.base + '/showcase/' + encodeURIComponent(id),
+      {params: {...(language ? {chapterLanguage: language} : {}), ...(tagId ? {tagId} : {}), ...(cursor ? {cursor} : {})}});
   }
 
   syncStatus(source: string) {
@@ -441,6 +573,71 @@ export class Api {
 
   delete(id: string) {
     return this.http.delete<void>(this.libraryUrl + '/' + encodeURIComponent(id));
+  }
+
+  reading(key: TitleKey) {
+    return this.http.get<ReadingState>(this.titleUrl(key) + '/reading');
+  }
+
+  claimReading(key: TitleKey, body: {eventId: string; sessionId: string; expectedRevision: string}) {
+    return this.http.post<ReadingSession>(this.titleUrl(key) + '/reading/sessions', body, {keepalive: true});
+  }
+
+  saveReading(key: TitleKey, event: ReadingEvent) {
+    return this.http.put<ReadingSaved>(this.titleUrl(key) + '/reading/progress', event, {keepalive: true});
+  }
+
+  markReading(key: TitleKey, chapter: string, language: string, isRead: boolean, expectedRevision: string) {
+    return this.http.patch<ReadingSaved>(this.titleUrl(key) + '/chapters/' + encodeURIComponent(chapter) + '/reading',
+      {eventId: crypto.randomUUID(), expectedRevision, isRead}, {params: {language}});
+  }
+
+  controlDownload(id: string,action: 'pause' | 'resume' | 'prioritize') {
+    return this.http.post<Download>(this.downloadsUrl + '/' + id + '/queue/' + action,null);
+  }
+
+  bookmarks(key: TitleKey) {
+    return this.http.get<ChapterBookmark[]>(this.titleUrl(key) + '/bookmarks');
+  }
+
+  chapterActions(key: TitleKey,action: ChapterAction,items: ChapterBookmark[]) {
+    return this.http.post<ChapterActionResult[]>(this.titleUrl(key) + '/chapter-actions',{action,items});
+  }
+
+  backupExport() { return this.http.get<Record<string,unknown>>(this.base + '/library-backup'); }
+  backupPreview(backup: Record<string,unknown>) {
+    return this.http.post<BackupPreview>(this.base + '/library-backup/preview',backup);
+  }
+  backupRestore(backup: Record<string,unknown>) {
+    return this.http.post<BackupPreview>(this.base + '/library-backup',backup);
+  }
+  transferPreview(entry:string,key:TitleKey) {
+    return this.http.get<TransferPreview>(this.libraryUrl + '/' + entry + '/transfer',
+      {params:{sourceId:key.sourceId,externalTitleId:key.externalTitleId}});
+  }
+  transfer(entry:string,key:TitleKey) {
+    return this.http.post<{entryId:string;duplicate:boolean}>(this.libraryUrl + '/' + entry + '/transfer',
+      {sourceId:key.sourceId,externalTitleId:key.externalTitleId,confirmed:true});
+  }
+
+  importLocal(body: FormData) {
+    return this.http.post<LocalImportResult>(this.base + '/local-comics',body);
+  }
+
+  importServerFolder(body: {title:string;chapter:string;language:string;path:string}) {
+    return this.http.post<LocalImportResult>(this.base + '/local-comics/folder',body);
+  }
+
+  libraryUpdates(language: string, before?: number) {
+    let params = new HttpParams();
+    if (language) params = params.set('language', language);
+    if (before !== undefined) params = params.set('before', before);
+    return this.http.get<{items: LibraryUpdateItem[]; unread: number; nextCursor: number | null}>(
+      this.base + '/library-updates', {params});
+  }
+
+  readingHistory(cursor?: string) {
+    return this.http.get<ReadingHistory>(this.base + '/reading-history', {params: cursor ? {cursor} : {}});
   }
 
   private titleUrl(key: TitleKey) {
